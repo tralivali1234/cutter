@@ -1,72 +1,84 @@
 #ifndef FUNCTIONSWIDGET_H
 #define FUNCTIONSWIDGET_H
 
-#include <QSortFilterProxyModel>
-#include <QTreeView>
 #include <memory>
-#include "cutter.h"
-#include "DockWidget.h"
+
+#include "core/Cutter.h"
+#include "CutterDockWidget.h"
+#include "widgets/ListDockWidget.h"
 
 class MainWindow;
-class QTreeWidgetItem;
+class FunctionsTask;
+class FunctionsWidget;
 
-namespace Ui
-{
-    class FunctionsWidget;
-}
-
-
-class FunctionModel : public QAbstractItemModel
+class FunctionModel : public AddressableItemModel<>
 {
     Q_OBJECT
 
+    friend FunctionsWidget;
+
 private:
-    MainWindow *main;
-
     QList<FunctionDescription> *functions;
-    QSet<RVA> *import_addresses;
+    QSet<RVA> *importAddresses;
+    ut64 *mainAdress;
 
 
-    QFont highlight_font;
-    QFont default_font;
+    QFont highlightFont;
+    QFont defaultFont;
     bool nested;
 
-    int current_index;
+    int currentIndex;
+
+    bool functionIsImport(ut64 addr) const;
+
+    bool functionIsMain(ut64 addr) const;
 
 public:
     static const int FunctionDescriptionRole = Qt::UserRole;
     static const int IsImportRole = Qt::UserRole + 1;
 
-    FunctionModel(QList<FunctionDescription> *functions, QSet<RVA> *import_addresses, bool nested, QFont default_font, QFont highlight_font, MainWindow *main, QObject *parent = 0);
+    enum Column { NameColumn = 0, SizeColumn, ImportColumn, OffsetColumn, NargsColumn, NlocalsColumn,
+                  NbbsColumn, CalltypeColumn, EdgesColumn, FrameColumn, ColumnCount
+                };
 
-    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const;
-    QModelIndex parent(const QModelIndex &index) const;
+    FunctionModel(QList<FunctionDescription> *functions, QSet<RVA> *importAddresses, ut64 *mainAdress,
+                  bool nested, QFont defaultFont, QFont highlightFont, QObject *parent = nullptr);
 
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const;
+    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex &index) const override;
 
-    QVariant data(const QModelIndex &index, int role) const;
-    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
 
-    void beginReloadFunctions();
-    void endReloadFunctions();
+    QVariant data(const QModelIndex &index, int role) const override;
+    QVariant headerData(int section, Qt::Orientation orientation,
+                        int role = Qt::DisplayRole) const override;
 
-    void updateCurrentIndex();
+    /**
+     * @return true if the index changed
+     */
+    bool updateCurrentIndex();
 
-    bool isNested()     { return nested; }
+    void setNested(bool nested);
+    bool isNested()
+    {
+        return nested;
+    }
 
+    RVA address(const QModelIndex &index) const override;
+    QString name(const QModelIndex &index) const override;
 private slots:
-    void cursorAddressChanged(RVA addr);
+    void seekChanged(RVA addr);
     void functionRenamed(const QString &prev_name, const QString &new_name);
 };
 
 
-class FunctionSortFilterProxyModel : public QSortFilterProxyModel
+class FunctionSortFilterProxyModel : public AddressableFilterProxyModel
 {
     Q_OBJECT
 
 public:
-    FunctionSortFilterProxyModel(FunctionModel *source_model, QObject *parent = 0);
+    FunctionSortFilterProxyModel(FunctionModel *source_model, QObject *parent = nullptr);
 
 protected:
     bool filterAcceptsRow(int row, const QModelIndex &parent) const override;
@@ -75,61 +87,41 @@ protected:
 
 
 
-class FunctionsWidget : public DockWidget
+class FunctionsWidget : public ListDockWidget
 {
     Q_OBJECT
 
 public:
-    explicit FunctionsWidget(MainWindow *main, QWidget *parent = 0);
-    ~FunctionsWidget();
-
-    void setup() override;
-
-    void refresh() override;
+    explicit FunctionsWidget(MainWindow *main, QAction *action = nullptr);
+    ~FunctionsWidget() override;
+    void changeSizePolicy(QSizePolicy::Policy hor, QSizePolicy::Policy ver);
 
 private slots:
-    void functionsTreeView_doubleClicked(const QModelIndex &index);
-    void showFunctionsContextMenu(const QPoint &pt);
-
-    void on_actionDisasAdd_comment_triggered();
-    void on_actionFunctionsRename_triggered();
-    void on_action_References_triggered();
-
-    void on_actionHorizontal_triggered();
-    void on_actionVertical_triggered();
-
-    void show_filter();
-
-    void clear_filter();
-
-    void on_closeFilterButton_clicked();
-
+    void onActionFunctionsRenameTriggered();
+    void onActionFunctionsUndefineTriggered();
+    void onActionHorizontalToggled(bool enable);
+    void onActionVerticalToggled(bool enable);
     void showTitleContextMenu(const QPoint &pt);
+    void setTooltipStylesheet();
+    void refreshTree();
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
-    QTreeView *getCurrentTreeView();
-
-    std::unique_ptr<Ui::FunctionsWidget> ui;
-    MainWindow      *main;
-
+    QSharedPointer<FunctionsTask> task;
     QList<FunctionDescription> functions;
-    QSet<RVA> import_addresses;
+    QSet<RVA> importAddresses;
+    ut64 mainAdress;
+    FunctionModel *functionModel;
+    FunctionSortFilterProxyModel *functionProxyModel;
 
-    FunctionModel *function_model;
-    FunctionSortFilterProxyModel *function_proxy_model;
+    QMenu *titleContextMenu;
 
-    FunctionModel *nested_function_model;
-    FunctionSortFilterProxyModel *nested_function_proxy_model;
-
-    void refreshTree();
-    void setScrollMode();
+    QAction actionRename;
+    QAction actionUndefine;
+    QAction actionHorizontal;
+    QAction actionVertical;
 };
-
-
-
-
 
 #endif // FUNCTIONSWIDGET_H

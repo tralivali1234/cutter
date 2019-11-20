@@ -1,33 +1,37 @@
 #ifndef DASHBOARD_H
 #define DASHBOARD_H
 
-#include "DockWidget.h"
 #include <memory>
+#include "CutterDockWidget.h"
+
+QT_BEGIN_NAMESPACE
+QT_FORWARD_DECLARE_CLASS(QLineEdit)
+QT_FORWARD_DECLARE_CLASS(QJsonObject)
+QT_END_NAMESPACE
 
 class MainWindow;
 
-namespace Ui
-{
-    class Dashboard;
+namespace Ui {
+class Dashboard;
 }
 
-class Dashboard : public DockWidget
+class Dashboard : public CutterDockWidget
 {
     Q_OBJECT
 
 public:
-    explicit Dashboard(MainWindow *main, QWidget *parent = 0);
+    explicit Dashboard(MainWindow *main, QAction *action = nullptr);
     ~Dashboard();
 
-    void setup() override;
-
-    void refresh() override;
+private slots:
+    void updateContents();
+    void on_certificateButton_clicked();
+    void on_versioninfoButton_clicked();
 
 private:
-    void updateContents();
-
     std::unique_ptr<Ui::Dashboard>   ui;
-    MainWindow      *main;
+    void setPlainText(QLineEdit *textBox, const QString &text);
+    void setBool(QLineEdit *textBox, const QJsonObject &jsonObject, const QString &key);
 };
 
 #endif // DASHBOARD_H

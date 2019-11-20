@@ -9,7 +9,7 @@ class Omnibar : public QLineEdit
 {
     Q_OBJECT
 public:
-    explicit Omnibar(MainWindow *main, QWidget *parent = 0);
+    explicit Omnibar(MainWindow *main, QWidget *parent = nullptr);
 
     void refresh(const QStringList &flagList);
 
@@ -19,14 +19,12 @@ private slots:
     void restoreCompleter();
 
 public slots:
-    void showCommands();
     void clear();
 
 private:
     void setupCompleter();
 
     MainWindow          *main;
-    const QStringList   commands;
     QStringList         flags;
 };
 

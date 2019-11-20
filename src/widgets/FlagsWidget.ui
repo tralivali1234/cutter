@@ -31,26 +31,12 @@
      <number>0</number>
     </property>
     <item>
-     <widget class="QTreeView" name="flagsTreeView">
+     <widget class="AddressableItemList&lt;&gt;" name="flagsTreeView">
       <property name="styleSheet">
-       <string notr="true">QTreeView::item
+       <string notr="true">CutterTreeView::item
 {
-    padding-left:10px;
     padding-top: 1px;
     padding-bottom: 1px;
-    border-left: 10px;
-}
-
-QTreeView::item:hover
-{
-    background: rgb(242, 246, 248);
-    color: black;
-}
-
-QTreeView::item:selected
-{
-    background: gray;
-    color: white;
 }</string>
       </property>
       <property name="frameShape">
@@ -60,7 +46,7 @@ QTreeView::item:selected
        <bool>true</bool>
       </property>
       <property name="indentation">
-       <number>0</number>
+       <number>8</number>
       </property>
       <property name="sortingEnabled">
        <bool>true</bool>
@@ -108,7 +94,31 @@ QTreeView::item:selected
     </item>
    </layout>
   </widget>
+  <action name="actionRename">
+   <property name="text">
+    <string>Rename</string>
+   </property>
+   <property name="shortcut">
+    <string>N</string>
+   </property>
+  </action>
+  <action name="actionDelete">
+   <property name="text">
+    <string>Delete</string>
+   </property>
+   <property name="shortcut">
+    <string>Del</string>
+   </property>
+  </action>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>AddressableItemList&lt;&gt;</class>
+   <extends>QTreeView</extends>
+   <header>widgets/AddressableItemList.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

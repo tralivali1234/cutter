@@ -1,156 +1,327 @@
-#include <QTreeWidget>
+#include "CommentsWidget.h"
+#include "ui_ListDockWidget.h"
+#include "core/MainWindow.h"
+#include "common/Helpers.h"
+
 #include <QMenu>
 #include <QResizeEvent>
+#include <QShortcut>
 
-#include "CommentsWidget.h"
-#include "ui_CommentsWidget.h"
-#include "MainWindow.h"
-#include "utils/Helpers.h"
+CommentsModel::CommentsModel(QList<CommentDescription> *comments,
+                             QList<CommentGroup> *nestedComments,
+                             QObject *parent)
+    : AddressableItemModel<>(parent),
+      comments(comments),
+      nestedComments(nestedComments),
+      nested(false)
+{}
 
-CommentsWidget::CommentsWidget(MainWindow *main, QWidget *parent) :
-    DockWidget(parent),
-    ui(new Ui::CommentsWidget),
-    main(main)
+bool CommentsModel::isNested() const
 {
-    ui->setupUi(this);
+    return nested;
+}
 
-    ui->commentsTreeWidget->hideColumn(0);
+void CommentsModel::setNested(bool nested)
+{
+    beginResetModel();
+    this->nested = nested;
+    endResetModel();
+}
 
-    QTabBar *tabs = ui->tabWidget->tabBar();
-    tabs->setVisible(false);
+RVA CommentsModel::address(const QModelIndex &index) const
+{
+    if (isNested()) {
+        if (index.internalId() != 0) {
+            auto &group = nestedComments->at(index.parent().row());
+            return group.comments.at(index.row()).offset;
+        } else {
+            return nestedComments->at(index.row()).offset;
+        }
+    } else {
+        return comments->at(index.row()).offset;
+    }
+}
 
-    // Use a custom context menu on the dock title bar
-    //this->title_bar = this->titleBarWidget();
-    ui->actionHorizontal->setChecked(true);
+QModelIndex CommentsModel::index(int row, int column, const QModelIndex &parent) const
+{
+    if (!parent.isValid()) {
+        return createIndex(row, column, (quintptr) 0);
+    }
+
+    return createIndex(row, column, (quintptr)(parent.row() + 1));
+}
+
+QModelIndex CommentsModel::parent(const QModelIndex &index) const
+{
+    /* Ignore invalid indexes and root nodes */
+    if (!index.isValid() || index.internalId() == 0) {
+        return QModelIndex();
+    }
+
+    return this->index((int)(index.internalId() - 1), 0);
+}
+
+int CommentsModel::rowCount(const QModelIndex &parent) const
+{
+    if (!parent.isValid())
+        return (isNested() ? nestedComments->size() : comments->count());
+
+    if (isNested() && parent.internalId() == 0) {
+        return nestedComments->at(parent.row()).comments.size();
+    }
+
+    return 0;
+}
+
+int CommentsModel::columnCount(const QModelIndex &) const
+{
+    return (isNested()
+            ? static_cast<int>(CommentsModel::NestedColumnCount)
+            : static_cast<int>(CommentsModel::ColumnCount));
+}
+
+QVariant CommentsModel::data(const QModelIndex &index, int role) const
+{
+    if (!index.isValid() || (index.internalId() != 0 && !index.parent().isValid()))
+        return QVariant();
+
+    int commentIndex;
+    bool isSubnode;
+    if (index.internalId() != 0) {
+        /* Subnode */
+        commentIndex = index.parent().row();
+        isSubnode = true;
+    } else {
+        /* Root node */
+        commentIndex = index.row();
+        isSubnode = false;
+    }
+
+    QString groupName;
+    CommentDescription comment;
+    if (isNested()) {
+        auto &group = nestedComments->at(commentIndex);
+        groupName = group.name;
+        if (isSubnode) {
+            comment = group.comments.at(index.row());
+        }
+    } else {
+        comment = comments->at(commentIndex);
+    }
+
+    switch (role) {
+    case Qt::DisplayRole:
+        if (isNested()) {
+            if (isSubnode) {
+                switch (index.column()) {
+                case OffsetNestedColumn:
+                    return RAddressString(comment.offset);
+                case CommentNestedColumn:
+                    return comment.name;
+                default:
+                    break;
+                }
+            } else if (index.column() == OffsetNestedColumn) {
+                return groupName;
+            }
+        } else {
+            switch (index.column()) {
+            case CommentsModel::OffsetColumn:
+                return RAddressString(comment.offset);
+            case CommentsModel::FunctionColumn:
+                return Core()->cmdFunctionAt(comment.offset);
+            case CommentsModel::CommentColumn:
+                return comment.name;
+            default:
+                break;
+            }
+        }
+        break;
+    case CommentsModel::CommentDescriptionRole:
+        if (isNested() && index.internalId() == 0) {
+            break;
+        }
+        return QVariant::fromValue(comment);
+    default:
+        break;
+    }
+
+    return QVariant();
+}
+
+QVariant CommentsModel::headerData(int section, Qt::Orientation, int role) const
+{
+    if (role == Qt::DisplayRole) {
+        if (isNested()) {
+            switch (section) {
+            case CommentsModel::OffsetNestedColumn:
+                return tr("Function/Offset");
+            case CommentsModel::CommentNestedColumn:
+                return tr("Comment");
+            default:
+                break;
+            }
+        } else {
+            switch (section) {
+            case CommentsModel::OffsetColumn:
+                return tr("Offset");
+            case CommentsModel::FunctionColumn:
+                return tr("Function");
+            case CommentsModel::CommentColumn:
+                return tr("Comment");
+            default:
+                break;
+            }
+        }
+    }
+
+    return QVariant();
+}
+
+CommentsProxyModel::CommentsProxyModel(CommentsModel *sourceModel, QObject *parent)
+    : AddressableFilterProxyModel(sourceModel, parent)
+{
+    setFilterCaseSensitivity(Qt::CaseInsensitive);
+    setSortCaseSensitivity(Qt::CaseInsensitive);
+}
+
+bool CommentsProxyModel::filterAcceptsRow(int row, const QModelIndex &parent) const
+{
+    CommentsModel *srcModel = static_cast<CommentsModel *>(sourceModel());
+    if (srcModel->isNested()) {
+        // Disable filtering
+        return true;
+    }
+
+    QModelIndex index = sourceModel()->index(row, 0, parent);
+    auto comment = index.data(CommentsModel::CommentDescriptionRole).value<CommentDescription>();
+
+    return comment.name.contains(filterRegExp());
+}
+
+bool CommentsProxyModel::lessThan(const QModelIndex &left, const QModelIndex &right) const
+{
+    CommentsModel *srcModel = static_cast<CommentsModel *>(sourceModel());
+    if (srcModel->isNested()) {
+        // Disable sorting
+        return false;
+    }
+
+    if (!left.isValid() || !right.isValid())
+        return false;
+
+    if (left.parent().isValid() || right.parent().isValid())
+        return false;
+
+    auto leftComment = left.data(CommentsModel::CommentDescriptionRole).value<CommentDescription>();
+    auto rightComment = right.data(CommentsModel::CommentDescriptionRole).value<CommentDescription>();
+
+    switch (left.column()) {
+    case CommentsModel::OffsetColumn:
+        return leftComment.offset < rightComment.offset;
+    case CommentsModel::FunctionColumn:
+        return Core()->cmdFunctionAt(leftComment.offset) < Core()->cmdFunctionAt(rightComment.offset);
+    case CommentsModel::CommentColumn:
+        return leftComment.name < rightComment.name;
+    default:
+        break;
+    }
+
+    return false;
+}
+
+CommentsWidget::CommentsWidget(MainWindow *main, QAction *action) :
+    ListDockWidget(main, action),
+    actionHorizontal(tr("Horizontal"), this),
+    actionVertical(tr("Vertical"), this)
+{
+    setWindowTitle(tr("Comments"));
+    setObjectName("CommentsWidget");
+
+    commentsModel = new CommentsModel(&comments, &nestedComments, this);
+    commentsProxyModel = new CommentsProxyModel(commentsModel, this);
+    setModels(commentsProxyModel);
+    ui->treeView->sortByColumn(CommentsModel::CommentColumn, Qt::AscendingOrder);
+
+    titleContextMenu = new QMenu(this);
+    auto viewTypeGroup = new QActionGroup(titleContextMenu);
+    actionHorizontal.setCheckable(true);
+    actionHorizontal.setActionGroup(viewTypeGroup);
+    connect(&actionHorizontal, &QAction::toggled, this, &CommentsWidget::onActionHorizontalToggled);
+    actionVertical.setCheckable(true);
+    actionVertical.setActionGroup(viewTypeGroup);
+    connect(&actionVertical, &QAction::toggled, this, &CommentsWidget::onActionVerticalToggled);
+    titleContextMenu->addActions(viewTypeGroup->actions());
+
+
+    actionHorizontal.setChecked(true);
     this->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)),
-            this, SLOT(showTitleContextMenu(const QPoint &)));
+    connect(this, &QWidget::customContextMenuRequested,
+            this, &CommentsWidget::showTitleContextMenu);
 
-    connect(main->core, SIGNAL(commentsChanged()), this, SLOT(refreshTree()));
-
-    // Hide the buttons frame
-    ui->frame->hide();
+    connect(Core(), SIGNAL(commentsChanged()), this, SLOT(refreshTree()));
+    connect(Core(), SIGNAL(refreshAll()), this, SLOT(refreshTree()));
 }
 
 CommentsWidget::~CommentsWidget() {}
 
-void CommentsWidget::setup()
+void CommentsWidget::onActionHorizontalToggled(bool checked)
 {
-    refreshTree();
+    if (checked) {
+        commentsModel->setNested(false);
+        ui->treeView->setIndentation(8);
+    }
 }
 
-void CommentsWidget::refresh()
+void CommentsWidget::onActionVerticalToggled(bool checked)
 {
-    refreshTree();
-}
-
-void CommentsWidget::on_commentsTreeWidget_itemDoubleClicked(QTreeWidgetItem *item, int column)
-{
-    Q_UNUSED(column);
-
-    // Get offset and name of item double clicked
-    CommentDescription comment = item->data(0, Qt::UserRole).value<CommentDescription>();
-    this->main->addDebugOutput(RAddressString(comment.offset) + ": " + comment.name);
-    this->main->seek(comment.offset);
-    //this->main->seek(comment.offset, comment.name, true);
-}
-
-void CommentsWidget::on_toolButton_clicked()
-{
-    ui->tabWidget->setCurrentIndex(0);
-}
-
-void CommentsWidget::on_toolButton_2_clicked()
-{
-    ui->tabWidget->setCurrentIndex(1);
+    if (checked) {
+        commentsModel->setNested(true);
+        ui->treeView->setIndentation(20);
+    }
 }
 
 void CommentsWidget::showTitleContextMenu(const QPoint &pt)
 {
-    // Set functions popup menu
-    QMenu *menu = new QMenu(this);
-    menu->clear();
-    menu->addAction(ui->actionHorizontal);
-    menu->addAction(ui->actionVertical);
-
-    if (ui->tabWidget->currentIndex() == 0)
-    {
-        ui->actionHorizontal->setChecked(true);
-        ui->actionVertical->setChecked(false);
-    }
-    else
-    {
-        ui->actionVertical->setChecked(true);
-        ui->actionHorizontal->setChecked(false);
-    }
-
-    this->setContextMenuPolicy(Qt::CustomContextMenu);
-
-    menu->exec(this->mapToGlobal(pt));
-    delete menu;
-}
-
-void CommentsWidget::on_actionHorizontal_triggered()
-{
-    ui->tabWidget->setCurrentIndex(0);
-}
-
-void CommentsWidget::on_actionVertical_triggered()
-{
-    ui->tabWidget->setCurrentIndex(1);
+    titleContextMenu->exec(this->mapToGlobal(pt));
 }
 
 void CommentsWidget::resizeEvent(QResizeEvent *event)
 {
-    if (main->responsive && isVisible())
-    {
-        if (event->size().width() >= event->size().height())
-        {
+    if (mainWindow->responsive && isVisible()) {
+        if (event->size().width() >= event->size().height()) {
             // Set horizontal view (list)
-            on_actionHorizontal_triggered();
-        }
-        else
-        {
+            actionHorizontal.setChecked(true);
+        } else {
             // Set vertical view (Tree)
-            on_actionVertical_triggered();
+            actionVertical.setChecked(true);
         }
     }
     QDockWidget::resizeEvent(event);
 }
 
-
-
 void CommentsWidget::refreshTree()
 {
-    ui->nestedCmtsTreeWidget->clear();
-    QList<CommentDescription> comments = this->main->core->getAllComments("CCu");
+    commentsModel->beginResetModel();
 
-    for (CommentDescription comment : comments)
-    {
-        //this->main->add_debug_output(RAddressString(comment.offset));
-        QString fcn_name = this->main->core->cmdFunctionAt(comment.offset);
-        QTreeWidgetItem *item = qhelpers::appendRow(ui->commentsTreeWidget, RAddressString(comment.offset), fcn_name, comment.name);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(comment));
-    }
-    qhelpers::adjustColumns(ui->commentsTreeWidget);
-
-    // Add nested comments
-    ui->nestedCmtsTreeWidget->clear();
-    QMap<QString, QList<QList<QString>>> cmts = this->main->core->getNestedComments();
-    for (auto cmt : cmts.keys())
-    {
-        QTreeWidgetItem *item = new QTreeWidgetItem(ui->nestedCmtsTreeWidget);
-        item->setText(0, cmt);
-        QList<QList<QString>> meow = cmts.value(cmt);
-        for (int i = 0; i < meow.size(); ++i)
-        {
-            QList<QString> tmp = meow.at(i);
-            QTreeWidgetItem *it = new QTreeWidgetItem();
-            it->setText(0, tmp[1]);
-            it->setText(1, tmp[0].remove('"'));
-            item->addChild(it);
+    comments = Core()->getAllComments("CCu");
+    nestedComments.clear();
+    QMap<QString, size_t> nestedCommentMapping;
+    for (const CommentDescription &comment : comments) {
+        RVA offset = RVA_INVALID;
+        QString fcnName = Core()->nearestFlag(comment.offset, &offset);
+        auto nestedCommentIt = nestedCommentMapping.find(fcnName);
+        if (nestedCommentIt == nestedCommentMapping.end()) {
+            nestedCommentMapping.insert(fcnName, nestedComments.size());
+            nestedComments.push_back({fcnName, offset, {comment}});
+        } else {
+            auto &commentGroup = nestedComments[nestedCommentIt.value()];
+            commentGroup.comments.append(comment);
         }
-        ui->nestedCmtsTreeWidget->addTopLevelItem(item);
     }
-    qhelpers::adjustColumns(ui->nestedCmtsTreeWidget);
+
+    commentsModel->endResetModel();
+
+    qhelpers::adjustColumns(ui->treeView, 3, 0);
 }
+

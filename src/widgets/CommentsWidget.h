@@ -1,50 +1,104 @@
 #ifndef COMMENTSWIDGET_H
 #define COMMENTSWIDGET_H
 
-#include "DockWidget.h"
 #include <memory>
+#include <QAbstractItemModel>
+#include <QSortFilterProxyModel>
+
+#include "core/Cutter.h"
+#include "common/AddressableItemModel.h"
+#include "CutterDockWidget.h"
+#include "CutterTreeWidget.h"
+#include "widgets/ListDockWidget.h"
 
 class MainWindow;
 class QTreeWidgetItem;
+class CommentsWidget;
 
-namespace Ui
+struct CommentGroup
 {
-    class CommentsWidget;
-}
+    QString name;
+    RVA offset;
+    QList<CommentDescription> comments;
+};
 
-class CommentsWidget : public DockWidget
+class CommentsModel : public AddressableItemModel<>
+{
+    Q_OBJECT
+
+    friend CommentsWidget;
+
+private:
+    QList<CommentDescription> *comments;
+    QList<CommentGroup> *nestedComments;
+    bool nested;
+
+public:
+    enum Column { OffsetColumn = 0, FunctionColumn, CommentColumn, ColumnCount };
+    enum NestedColumn { OffsetNestedColumn = 0, CommentNestedColumn, NestedColumnCount };
+    enum Role { CommentDescriptionRole = Qt::UserRole, FunctionRole };
+
+    CommentsModel(QList<CommentDescription> *comments,
+                  QList<CommentGroup> *nestedComments,
+                  QObject *parent = nullptr);
+
+    QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override;
+    QModelIndex parent(const QModelIndex &index) const override;
+
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
+
+    QVariant data(const QModelIndex &index, int role) const override;
+    QVariant headerData(int section, Qt::Orientation orientation,
+                        int role = Qt::DisplayRole) const override;
+
+    bool isNested() const;
+    void setNested(bool nested);
+
+    RVA address(const QModelIndex &index) const override;
+};
+
+class CommentsProxyModel : public AddressableFilterProxyModel
 {
     Q_OBJECT
 
 public:
-    explicit CommentsWidget(MainWindow *main, QWidget *parent = 0);
-    ~CommentsWidget();
+    CommentsProxyModel(CommentsModel *sourceModel, QObject *parent = nullptr);
 
-    void setup() override;
+protected:
+    bool filterAcceptsRow(int row, const QModelIndex &parent) const override;
+    bool lessThan(const QModelIndex &left, const QModelIndex &right) const override;
+};
 
-    void refresh() override;
+class CommentsWidget : public ListDockWidget
+{
+    Q_OBJECT
+
+public:
+    explicit CommentsWidget(MainWindow *main, QAction *action = nullptr);
+    ~CommentsWidget() override;
 
 protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private slots:
-    void on_commentsTreeWidget_itemDoubleClicked(QTreeWidgetItem *item, int column);
-
-    void on_toolButton_clicked();
-
-    void on_toolButton_2_clicked();
+    void onActionHorizontalToggled(bool checked);
+    void onActionVerticalToggled(bool checked);
 
     void showTitleContextMenu(const QPoint &pt);
-
-    void on_actionHorizontal_triggered();
-
-    void on_actionVertical_triggered();
 
     void refreshTree();
 
 private:
-    std::unique_ptr<Ui::CommentsWidget> ui;
-    MainWindow      *main;
+    CommentsModel *commentsModel;
+    CommentsProxyModel *commentsProxyModel;
+    QAction actionHorizontal;
+    QAction actionVertical;
+
+    QList<CommentDescription> comments;
+    QList<CommentGroup> nestedComments;
+
+    QMenu *titleContextMenu;
 };
 
 #endif // COMMENTSWIDGET_H

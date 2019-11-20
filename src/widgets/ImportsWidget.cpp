@@ -1,112 +1,169 @@
 #include "ImportsWidget.h"
-#include "ui_ImportsWidget.h"
+#include "ui_ListDockWidget.h"
+#include "WidgetShortcuts.h"
+#include "core/MainWindow.h"
+#include "common/Helpers.h"
 
-#include "MainWindow.h"
-#include "utils/Helpers.h"
-
-#include <QTreeWidget>
-#include <QPen>
 #include <QPainter>
+#include <QPen>
+#include <QShortcut>
+#include <QTreeWidget>
 
+ImportsModel::ImportsModel(QList<ImportDescription> *imports, QObject *parent) :
+    AddressableItemModel(parent),
+    imports(imports)
+{}
 
-void CMyDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
+int ImportsModel::rowCount(const QModelIndex &parent) const
 {
-    QStyleOptionViewItem itemOption(option);
-    initStyleOption(&itemOption, index);
+    return parent.isValid() ? 0 : imports->count();
+}
 
-    itemOption.rect.adjust(10, 0, 0, 0);  // Make the item rectangle 10 pixels smaller from the left side.
+int ImportsModel::columnCount(const QModelIndex &) const
+{
+    return ImportsModel::ColumnCount;
+}
 
-    // Draw your item content.
-    QApplication::style()->drawControl(QStyle::CE_ItemViewItem, &itemOption, painter, nullptr);
+QVariant ImportsModel::data(const QModelIndex &index, int role) const
+{
+    const ImportDescription &import = imports->at(index.row());
+    switch (role) {
+    case Qt::ForegroundRole:
+        if (index.column() < ImportsModel::ColumnCount) {
+            // Red color for unsafe functions
+            if (banned.match(import.name).hasMatch())
+                return Config()->getColor("gui.item_unsafe");
+            // Grey color for symbols at offset 0 which can only be filled at runtime
+            if (import.plt == 0)
+                return Config()->getColor("gui.item_invalid");
+        }
+        break;
+    case Qt::DisplayRole:
+        switch (index.column()) {
+        case ImportsModel::AddressColumn:
+            return RAddressString(import.plt);
+        case ImportsModel::TypeColumn:
+            return import.type;
+        case ImportsModel::SafetyColumn:
+            return banned.match(import.name).hasMatch() ? tr("Unsafe") : QStringLiteral("");
+        case ImportsModel::NameColumn:
+            return import.name;
+        default:
+            break;
+        }
+        break;
+    case ImportsModel::ImportDescriptionRole:
+        return QVariant::fromValue(import);
+    case ImportsModel::AddressRole:
+        return import.plt;
+    default:
+        break;
+    }
+    return QVariant();
+}
 
-    // And now you can draw a bottom border.
-    //painter->setPen(Qt::cyan);
-    QPen pen = painter->pen();
-    pen.setColor(Qt::white);
-    pen.setWidth(1);
-    painter->setPen(pen);
-    painter->drawLine(itemOption.rect.bottomLeft(), itemOption.rect.bottomRight());
+QVariant ImportsModel::headerData(int section, Qt::Orientation, int role) const
+{
+    if (role == Qt::DisplayRole) {
+        switch (section) {
+        case ImportsModel::AddressColumn:
+            return tr("Address");
+        case ImportsModel::TypeColumn:
+            return tr("Type");
+        case ImportsModel::SafetyColumn:
+            return tr("Safety");
+        case ImportsModel::NameColumn:
+            return tr("Name");
+        default:
+            break;
+        }
+    }
+    return QVariant();
+}
+
+RVA ImportsModel::address(const QModelIndex &index) const
+{
+    const ImportDescription &import = imports->at(index.row());
+    return import.plt;
+}
+
+QString ImportsModel::name(const QModelIndex &index) const
+{
+    const ImportDescription &import = imports->at(index.row());
+    return import.name;
+}
+
+ImportsProxyModel::ImportsProxyModel(ImportsModel *sourceModel, QObject *parent)
+    : AddressableFilterProxyModel(sourceModel, parent)
+{
+    setFilterCaseSensitivity(Qt::CaseInsensitive);
+    setSortCaseSensitivity(Qt::CaseInsensitive);
+}
+
+bool ImportsProxyModel::filterAcceptsRow(int row, const QModelIndex &parent) const
+{
+    QModelIndex index = sourceModel()->index(row, 0, parent);
+    auto import = index.data(ImportsModel::ImportDescriptionRole).value<ImportDescription>();
+
+    return import.name.contains(filterRegExp());
+}
+
+bool ImportsProxyModel::lessThan(const QModelIndex &left, const QModelIndex &right) const
+{
+    if (!left.isValid() || !right.isValid())
+        return false;
+
+    if (left.parent().isValid() || right.parent().isValid())
+        return false;
+
+    auto leftImport = left.data(ImportsModel::ImportDescriptionRole).value<ImportDescription>();
+    auto rightImport = right.data(ImportsModel::ImportDescriptionRole).value<ImportDescription>();
+
+    switch (left.column()) {
+    case ImportsModel::AddressColumn:
+        return leftImport.plt < rightImport.plt;
+    case ImportsModel::TypeColumn:
+        return leftImport.type < rightImport.type;
+    case ImportsModel::SafetyColumn:
+        break;
+    case ImportsModel::NameColumn:
+        return leftImport.name < rightImport.name;
+    default:
+        break;
+    }
+
+    return false;
 }
 
 /*
  * Imports Widget
  */
 
-ImportsWidget::ImportsWidget(MainWindow *main, QWidget *parent) :
-    DockWidget(parent),
-    ui(new Ui::ImportsWidget),
-    main(main)
+ImportsWidget::ImportsWidget(MainWindow *main, QAction *action) :
+    ListDockWidget(main, action),
+    importsModel(new ImportsModel(&imports, this)),
+    importsProxyModel(new ImportsProxyModel(importsModel, this))
 {
-    ui->setupUi(this);
+    setWindowTitle(tr("Imports"));
+    setObjectName("ImportsWidget");
 
-    // Delegate
-    //CMyDelegate* delegate = new CMyDelegate(ui->importsTreeWidget);
-    //ui->importsTreeWidget->setItemDelegate(delegate);
+    setModels(importsProxyModel);
+    ui->treeView->sortByColumn(ImportsModel::NameColumn, Qt::AscendingOrder);
+    QShortcut *toggle_shortcut = new QShortcut(widgetShortcuts["ImportsWidget"], main);
+    connect(toggle_shortcut, &QShortcut::activated, this, [=] (){ 
+            toggleDockWidget(true); 
+            main->updateDockActionChecked(action);
+            } );
 
-    ui->importsTreeWidget->hideColumn(0);
+    connect(Core(), SIGNAL(refreshAll()), this, SLOT(refreshImports()));
 }
 
 ImportsWidget::~ImportsWidget() {}
 
-void ImportsWidget::setup()
+void ImportsWidget::refreshImports()
 {
-    setScrollMode();
-
-    fillImports();
-}
-
-void ImportsWidget::refresh()
-{
-    setup();
-}
-
-void ImportsWidget::fillImports()
-{
-    ui->importsTreeWidget->clear();
-    for (auto i : this->main->core->getAllImports())
-    {
-        QTreeWidgetItem *item = qhelpers::appendRow(ui->importsTreeWidget, RAddressString(i.plt), i.type, "", i.name);
-        item->setData(0, Qt::UserRole, QVariant::fromValue(i));
-    }
-
-    highlightUnsafe();
-    qhelpers::adjustColumns(ui->importsTreeWidget, 0, 10);
-}
-
-void ImportsWidget::highlightUnsafe()
-{
-    static const QString banned("[a-zA-Z_.]*(system|strcpy|strcpyA|strcpyW|wcscpy|_tcscpy|_mbscpy|StrCpy|StrCpyA|StrCpyW|lstrcpy|lstrcpyA|lstrcpyW" \
-                                "|_tccpy|_mbccpy|_ftcscpy|strcat|strcatA|strcatW|wcscat|_tcscat|_mbscat|StrCat|StrCatA|StrCatW|lstrcat|lstrcatA|" \
-                                "lstrcatW|StrCatBuff|StrCatBuffA|StrCatBuffW|StrCatChainW|_tccat|_mbccat|_ftcscat|sprintfW|sprintfA|wsprintf|wsprintfW|" \
-                                "wsprintfA|sprintf|swprintf|_stprintf|wvsprintf|wvsprintfA|wvsprintfW|vsprintf|_vstprintf|vswprintf|strncpy|wcsncpy|" \
-                                "_tcsncpy|_mbsncpy|_mbsnbcpy|StrCpyN|StrCpyNA|StrCpyNW|StrNCpy|strcpynA|StrNCpyA|StrNCpyW|lstrcpyn|lstrcpynA|lstrcpynW|" \
-                                "strncat|wcsncat|_tcsncat|_mbsncat|_mbsnbcat|StrCatN|StrCatNA|StrCatNW|StrNCat|StrNCatA|StrNCatW|lstrncat|lstrcatnA|" \
-                                "lstrcatnW|lstrcatn|gets|_getts|_gettws|IsBadWritePtr|IsBadHugeWritePtr|IsBadReadPtr|IsBadHugeReadPtr|IsBadCodePtr|" \
-                                "IsBadStringPtr|memcpy|RtlCopyMemory|CopyMemory|wmemcpy|wnsprintf|wnsprintfA|wnsprintfW|_snwprintf|_snprintf|_sntprintf|" \
-                                "_vsnprintf|vsnprintf|_vsnwprintf|_vsntprintf|wvnsprintf|wvnsprintfA|wvnsprintfW|strtok|_tcstok|wcstok|_mbstok|makepath|" \
-                                "_tmakepath| _makepath|_wmakepath|_splitpath|_tsplitpath|_wsplitpath|scanf|wscanf|_tscanf|sscanf|swscanf|_stscanf|snscanf|" \
-                                "snwscanf|_sntscanf|_itoa|_itow|_i64toa|_i64tow|_ui64toa|_ui64tot|_ui64tow|_ultoa|_ultot|_ultow|CharToOem|CharToOemA|CharToOemW|" \
-                                "OemToChar|OemToCharA|OemToCharW|CharToOemBuffA|CharToOemBuffW|alloca|_alloca|strlen|wcslen|_mbslen|_mbstrlen|StrLen|lstrlen|" \
-                                "ChangeWindowMessageFilter)");
-
-    QList<QTreeWidgetItem *> clist = ui->importsTreeWidget->findItems(banned, Qt::MatchRegExp, 4);
-    foreach (QTreeWidgetItem *item, clist)
-    {
-        item->setText(3, "Unsafe");
-        //item->setBackgroundColor(4, QColor(255, 129, 123));
-        //item->setForeground(4, Qt::white);
-        item->setForeground(4, QColor(255, 129, 123));
-    }
-    //ui->importsTreeWidget->setStyleSheet("QTreeWidget::item { padding-left:10px; padding-top: 1px; padding-bottom: 1px; border-left: 10px; }");
-}
-
-void ImportsWidget::setScrollMode()
-{
-    qhelpers::setVerticalScrollMode(ui->importsTreeWidget);
-}
-
-void ImportsWidget::on_importsTreeWidget_itemDoubleClicked(QTreeWidgetItem *item, int /* column */)
-{
-    ImportDescription imp = item->data(0, Qt::UserRole).value<ImportDescription>();
-    this->main->seek(imp.plt);
+    importsModel->beginResetModel();
+    imports = Core()->getAllImports();
+    importsModel->endResetModel();
+    qhelpers::adjustColumns(ui->treeView, 4, 0);
 }

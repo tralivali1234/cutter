@@ -1,7 +1,13 @@
 #include "Dashboard.h"
 #include "ui_Dashboard.h"
+#include "common/Helpers.h"
+#include "common/JsonModel.h"
+#include "common/JsonTreeItem.h"
+#include "common/TempConfig.h"
+#include "dialogs/VersionInfoDialog.h"
 
-#include "MainWindow.h"
+#include "core/MainWindow.h"
+#include "CutterTreeView.h"
 
 #include <QDebug>
 #include <QJsonArray>
@@ -10,163 +16,92 @@
 #include <QJsonDocument>
 #include <QFile>
 #include <QLayoutItem>
+#include <QString>
+#include <QMessageBox>
+#include <QDialog>
+#include <QTreeWidget>
 
-
-Dashboard::Dashboard(MainWindow *main, QWidget *parent) :
-    DockWidget(parent),
-    ui(new Ui::Dashboard),
-    main(main)
+Dashboard::Dashboard(MainWindow *main, QAction *action) :
+    CutterDockWidget(main, action),
+    ui(new Ui::Dashboard)
 {
     ui->setupUi(this);
 
-    //this->updateContents();
+    connect(Core(), SIGNAL(refreshAll()), this, SLOT(updateContents()));
 }
 
 Dashboard::~Dashboard() {}
 
-void Dashboard::setup()
-{
-    updateContents();
-}
-
-void Dashboard::refresh()
-{
-    updateContents();
-}
-
 void Dashboard::updateContents()
 {
-    // Parse and add JSON file info
-    QString info = this->main->core->getFileInfo();
+    QJsonDocument docu = Core()->getFileInfo();
+    QJsonObject item = docu.object()["core"].toObject();
+    QJsonObject item2 = docu.object()["bin"].toObject();
 
-    QJsonDocument docu = QJsonDocument::fromJson(info.toUtf8());
-    QJsonObject object = docu.object();
-    QJsonValue value_core = object.value(QString("core"));
-    QJsonObject item = value_core.toObject();
-    //qDebug() << tr("QJsonObject of description: ") << item;
+    setPlainText(this->ui->fileEdit, item["file"].toString());
+    setPlainText(this->ui->formatEdit, item["format"].toString());
+    setPlainText(this->ui->modeEdit, item["mode"].toString());
+    setPlainText(this->ui->typeEdit, item["type"].toString());
+    setPlainText(this->ui->sizeEdit, qhelpers::formatBytecount(item["size"].toDouble()));
+    setPlainText(this->ui->fdEdit, QString::number(item["fd"].toDouble()));
 
-    QJsonValue value_bin = object.value(QString("bin"));
-    //qDebug() << value;
-    QJsonObject item2 = value_bin.toObject();
-    //qDebug() << tr("QJsonObject of description: ") << item;
+    setPlainText(this->ui->archEdit, item2["arch"].toString());
+    setPlainText(this->ui->langEdit, item2["lang"].toString().toUpper());
+    setPlainText(this->ui->classEdit, item2["class"].toString());
+    setPlainText(this->ui->machineEdit, item2["machine"].toString());
+    setPlainText(this->ui->osEdit, item2["os"].toString());
+    setPlainText(this->ui->subsysEdit, item2["subsys"].toString());
+    setPlainText(this->ui->endianEdit, item2["endian"].toString());
+    setPlainText(this->ui->compilationDateEdit, item2["compiled"].toString());
+    setPlainText(this->ui->compilerEdit, item2["compiler"].toString());
+    setPlainText(this->ui->bitsEdit, QString::number(item2["bits"].toDouble()));
 
-    this->ui->fileEdit->setText(item["file"].toString());
-    this->ui->formatEdit->setText(item["format"].toString());
-    this->ui->modeEdit->setText(item["mode"].toString());
-    this->ui->typeEdit->setText(item["type"].toString());
-    this->ui->sizeEdit->setText(QString::number(item["size"].toDouble()));
-    this->ui->fdEdit->setText(QString::number(item["fd"].toDouble()));
-
-    this->ui->archEdit->setText(item2["arch"].toString());
-    this->ui->langEdit->setText(item2["lang"].toString().toUpper());
-    this->ui->classEdit->setText(item2["class"].toString());
-    this->ui->machineEdit->setText(item2["machine"].toString());
-    this->ui->osEdit->setText(item2["os"].toString());
-    this->ui->subsysEdit->setText(item2["subsys"].toString());
-    this->ui->endianEdit->setText(item2["endian"].toString());
-    this->ui->compiledEdit->setText(item2["compiled"].toString());
-    this->ui->bitsEdit->setText(QString::number(item2["bits"].toDouble()));
-
-    if (!item2["relro"].isUndefined())
-    {
-        QString relro = item2["relro"].toString().split(" ").at(0);
+    if (!item2["relro"].isUndefined()) {
+        QString relro = item2["relro"].toString().section(QLatin1Char(' '), 0, 0);
         relro[0] = relro[0].toUpper();
-        this->ui->relroEdit->setText(relro);
+        setPlainText(this->ui->relroEdit, relro);
     }
 
-    this->ui->baddrEdit->setText(QString::number(item2["baddr"].toDouble()));
+    setPlainText(this->ui->baddrEdit, RAddressString(item2["baddr"].toVariant().toULongLong()));
 
-    if (item2["va"].toBool() == true)
-    {
-        this->ui->vaEdit->setText("True");
-    }
-    else
-    {
-        this->ui->vaEdit->setText("False");
-    }
-    if (item2["canary"].toBool() == true)
-    {
-        this->ui->canaryEdit->setText("True");
-    }
-    else
-    {
-        this->ui->canaryEdit->setText("False");
-        this->ui->canaryEdit->setStyleSheet("color: rgb(255, 0, 0);");
-    }
-    if (item2["crypto"].toBool() == true)
-    {
-        this->ui->cryptoEdit->setText("True");
-    }
-    else
-    {
-        this->ui->cryptoEdit->setText("False");
-    }
-    if (item2["nx"].toBool() == true)
-    {
-        this->ui->nxEdit->setText("True");
-    }
-    else
-    {
-        this->ui->nxEdit->setText("False");
-        this->ui->nxEdit->setStyleSheet("color: rgb(255, 0, 0);");
-    }
-    if (item2["pic"].toBool() == true)
-    {
-        this->ui->picEdit->setText("True");
-    }
-    else
-    {
-        this->ui->picEdit->setText("False");
-        this->ui->picEdit->setStyleSheet("color: rgb(255, 0, 0);");
-    }
-    if (item2["static"].toBool() == true)
-    {
-        this->ui->staticEdit->setText("True");
-    }
-    else
-    {
-        this->ui->staticEdit->setText("False");
-    }
-    if (item2["stripped"].toBool() == true)
-    {
-        this->ui->strippedEdit->setText("True");
-    }
-    else
-    {
-        this->ui->strippedEdit->setText("False");
-    }
-    if (item2["relocs"].toBool() == true)
-    {
-        this->ui->relocsEdit->setText("True");
-    }
-    else
-    {
-        this->ui->relocsEdit->setText("False");
-    }
+    // set booleans
+    setBool(this->ui->vaEdit, item2, "va");
+    setBool(this->ui->canaryEdit, item2, "canary");
+    setBool(this->ui->cryptoEdit, item2, "crypto");
+    setBool(this->ui->nxEdit, item2, "nx");
+    setBool(this->ui->picEdit, item2, "pic");
+    setBool(this->ui->staticEdit, item2, "static");
+    setBool(this->ui->strippedEdit, item2, "stripped");
+    setBool(this->ui->relocsEdit, item2, "relocs");
 
-    // Add file hashes and libraries
-    QString md5 = this->main->core->cmd("e file.md5");
-    QString sha1 = this->main->core->cmd("e file.sha1");
-    ui->md5Edit->setText(md5);
-    ui->sha1Edit->setText(sha1);
+    // Add file hashes, analysis info and libraries
+    QJsonObject hashes = Core()->cmdj("itj").object();
+    setPlainText(ui->md5Edit, hashes["md5"].toString());
+    setPlainText(ui->sha1Edit, hashes["sha1"].toString());
 
-    QString libs = this->main->core->cmd("il");
-    QStringList lines = libs.split("\n", QString::SkipEmptyParts);
-    if (!lines.isEmpty())
-    {
-        lines.removeFirst();
-        lines.removeLast();
+    QJsonObject analinfo = Core()->cmdj("aaij").object();
+    setPlainText(ui->functionsLineEdit, QString::number(analinfo["fcns"].toInt()));
+    setPlainText(ui->xRefsLineEdit, QString::number(analinfo["xrefs"].toInt()));
+    setPlainText(ui->callsLineEdit, QString::number(analinfo["calls"].toInt()));
+    setPlainText(ui->stringsLineEdit, QString::number(analinfo["strings"].toInt()));
+    setPlainText(ui->symbolsLineEdit, QString::number(analinfo["symbols"].toInt()));
+    setPlainText(ui->importsLineEdit, QString::number(analinfo["imports"].toInt()));
+    setPlainText(ui->coverageLineEdit, QString::number(analinfo["covrage"].toInt()) + " bytes");
+    setPlainText(ui->codeSizeLineEdit, QString::number(analinfo["codesz"].toInt()) + " bytes");
+    setPlainText(ui->percentageLineEdit, QString::number(analinfo["percent"].toInt()) + "%");
+
+    QStringList libs = Core()->cmdList("il");
+    if (!libs.isEmpty()) {
+        libs.removeFirst();
+        libs.removeLast();
     }
 
     // dunno: why not label->setText(lines.join("\n")?
-    while (ui->verticalLayout_2->count() > 0)
-    {
+    while (ui->verticalLayout_2->count() > 0) {
         QLayoutItem *item = ui->verticalLayout_2->takeAt(0);
-        if (item != nullptr)
-        {
+        if (item != nullptr) {
             QWidget *w = item->widget();
-            if (w != nullptr)
-            {
+            if (w != nullptr) {
                 w->deleteLater();
             }
 
@@ -174,8 +109,7 @@ void Dashboard::updateContents()
         }
     }
 
-    foreach (QString lib, lines)
-    {
+    for (const QString &lib : libs) {
         QLabel *label = new QLabel(this);
         label->setText(lib);
         label->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
@@ -189,35 +123,104 @@ void Dashboard::updateContents()
     ui->verticalLayout_2->addSpacerItem(spacer);
 
     // Add entropy value
-    QString entropy = this->main->core->cmd("ph entropy").trimmed();
-    ui->lblEntropy->setText(entropy);
+    {
+        // Scope for TempConfig
+        TempConfig tempConfig;
+        tempConfig.set("io.va", false);
+        QString entropy = Core()->cmd("ph entropy $s @ 0").trimmed();
+        ui->lblEntropy->setText(entropy);
+    }
+
 
     // Get stats for the graphs
-    QStringList stats = this->main->core->getStats();
+    QStringList stats = Core()->getStats();
 
-    // Add data to HTML graphs (stats)
-    QFile html(":/html/stats.html");
-    if (!html.open(QIODevice::ReadOnly))
-    {
-        QMessageBox::information(this, "error", html.errorString());
+    // Check if signature info and version info available
+    if (Core()->getSignatureInfo().isEmpty()) {
+        ui->certificateButton->setEnabled(false);
     }
-    QString code = html.readAll();
-    html.close();
-
-    QString data = QString("%1, %2, %3, %4, %5, %6").arg(stats.at(0)).arg(stats.at(1)).arg(stats.at(2)).arg(stats.at(3)).arg(stats.at(4)).arg(stats.at(5));
-    code.replace("MEOW", data);
-    ui->statsWebView->setHtml(code);
-
-    // Add data to polar graph
-    QFile html2(":/html/radar.html");
-    if (!html2.open(QIODevice::ReadOnly))
-    {
-        QMessageBox::information(this, "error", html2.errorString());
+    if (Core()->getFileVersionInfo().isEmpty()) {
+        ui->versioninfoButton->setEnabled(false);
     }
-    QString code2 = html2.readAll();
-    html2.close();
 
-    code2.replace("MEOW", data);
-    code2.replace("WOEM", data);
-    ui->polarWebView->setHtml(code2);
+}
+
+void Dashboard::on_certificateButton_clicked()
+{
+    static QDialog *viewDialog = nullptr;
+    static CutterTreeView *view = nullptr;
+    static JsonModel *model = nullptr;
+    static QString qstrCertificates;
+    if (!viewDialog) {
+        viewDialog = new QDialog(this);
+        view = new CutterTreeView(viewDialog);
+        model = new JsonModel();
+        QJsonDocument qjsonCertificatesDoc = Core()->getSignatureInfo();
+        qstrCertificates = qjsonCertificatesDoc.toJson(QJsonDocument::Compact);
+    }
+    if (!viewDialog->isVisible()) {
+        std::string strCertificates = qstrCertificates.toUtf8().constData();
+        model->loadJson(QByteArray::fromStdString(strCertificates));
+        view->setModel(model);
+        view->expandAll();
+        view->resize(900, 600);
+        QSizePolicy sizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        sizePolicy.setHorizontalStretch(0);
+        sizePolicy.setVerticalStretch(0);
+        sizePolicy.setHeightForWidth(view->sizePolicy().hasHeightForWidth());
+        viewDialog->setSizePolicy(sizePolicy);
+        viewDialog->setMinimumSize(QSize(900, 600));
+        viewDialog->setMaximumSize(QSize(900, 600));
+        viewDialog->setSizeGripEnabled(false);
+        viewDialog->setWindowTitle("Certificates");
+        viewDialog->show();
+    }
+}
+
+void Dashboard::on_versioninfoButton_clicked()
+{
+
+    static QDialog *infoDialog = nullptr;
+
+    if (!infoDialog) {
+        infoDialog = new VersionInfoDialog(this);
+    }
+
+    if (!infoDialog->isVisible()) {
+        infoDialog->show();
+    }
+}
+
+/**
+ * @brief Set the text of a QLineEdit. If no text, then "N/A" is set.
+ * @param textBox
+ * @param text
+ */
+void Dashboard::setPlainText(QLineEdit *textBox, const QString &text)
+{
+    if (!text.isEmpty()) {
+        textBox->setText(text);
+    } else {
+        textBox->setText(tr("N/A"));
+    }
+
+    textBox->setCursorPosition(0);
+}
+
+/**
+ * @brief Set the text of a QLineEdit as True, False or N/A if it does not exist
+ * @param textBox
+ * @param isTrue
+ */
+void Dashboard::setBool(QLineEdit *textBox, const QJsonObject &jsonObject, const QString &key)
+{
+    if (jsonObject.contains(key)) {
+        if (jsonObject[key].toBool()) {
+            setPlainText(textBox, tr("True"));
+        } else {
+            setPlainText(textBox, tr("False"));
+        }
+    } else {
+        setPlainText(textBox, tr("N/A"));
+    }
 }

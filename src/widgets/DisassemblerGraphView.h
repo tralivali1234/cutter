@@ -1,107 +1,31 @@
-/* x64dbg DisassemblerGraphView */
 #ifndef DISASSEMBLERGRAPHVIEW_H
 #define DISASSEMBLERGRAPHVIEW_H
 
-#include <QObject>
+// Based on the DisassemblerGraphView from x64dbg
+
 #include <QWidget>
-#include <QAbstractScrollArea>
-#include <QPaintEvent>
-#include <QTimer>
-#include <QSize>
-#include <QResizeEvent>
-#include <tuple>
-#include <unordered_map>
-#include <unordered_set>
-#include <queue>
-#include <QMutex>
-#include <QMenu>
-#include <QJsonDocument>
-#include <QJsonArray>
-#include <QJsonObject>
-#include "cutter.h"
-#include "MainWindow.h"
-#include "utils/RichTextPainter.h"
-#include "utils/CachedFontMetrics.h"
+#include <QPainter>
+#include <QShortcut>
+#include <QLabel>
 
-#define duint ut64
+#include "widgets/GraphView.h"
+#include "menus/DisassemblyContextMenu.h"
+#include "common/RichTextPainter.h"
+#include "common/CutterSeekable.h"
 
-class MenuBuilder;
-class CachedFontMetrics;
-class GotoDialog;
-class XrefBrowseDialog;
+class QTextEdit;
+class FallbackSyntaxHighlighter;
 
-class DisassemblerGraphView : public QAbstractScrollArea
+class DisassemblerGraphView : public GraphView
 {
     Q_OBJECT
-public:
-    struct DisassemblerBlock;
 
-    struct Point
-    {
-        int row; //point[0]
-        int col; //point[1]
-        int index; //point[2]
-    };
-
-    struct DisassemblerEdge
-    {
-        QColor color;
-        DisassemblerBlock* dest;
-        std::vector<Point> points;
-        int start_index = 0;
-
-        QPolygonF polyline;
-        QPolygonF arrow;
-
-        void addPoint(int row, int col, int index = 0)
-        {
-            Point point = {row, col, 0};
-            this->points.push_back(point);
-            if(int(this->points.size()) > 1)
-                this->points[this->points.size() - 2].index = index;
-        }
-    };
-
-    struct Token
-    {
-        int start; //token[0]
-        int length; //token[1]
-        QString type; //token[2]
-        duint addr; //token[3]
-        QString name; //token[4]
-    };
-
-    struct HighlightToken
-    {
-        QString type; //highlight_token[0]
-        duint addr; //highlight_token[1]
-        QString name; //highlight_token[2]
-
-        bool equalsToken(const Token & token)
-        {
-            return this->type == token.type &&
-                   this->addr == token.addr &&
-                   this->name == token.name;
-        }
-
-        static HighlightToken* fromToken(const Token & token)
-        {
-            //TODO: memory leaks
-            auto result = new HighlightToken();
-            result->type = token.type;
-            result->addr = token.addr;
-            result->name = token.name;
-            return result;
-        }
-    };
-
-    struct Text
-    {
+    struct Text {
         std::vector<RichTextPainter::List> lines;
 
         Text() {}
 
-        Text(const QString & text, QColor color, QColor background)
+        Text(const QString &text, QColor color, QColor background)
         {
             RichTextPainter::List richText;
             RichTextPainter::CustomRichText_t rt;
@@ -114,7 +38,7 @@ public:
             lines.push_back(richText);
         }
 
-        Text(const RichTextPainter::List & richText)
+        Text(const RichTextPainter::List &richText)
         {
             lines.push_back(richText);
         }
@@ -122,10 +46,8 @@ public:
         QString ToQString() const
         {
             QString result;
-            for(auto & line : lines)
-            {
-                for(auto & t : line)
-                {
+            for (const auto &line : lines) {
+                for (const auto &t : line) {
                     result += t.text;
                 }
             }
@@ -133,214 +55,163 @@ public:
         }
     };
 
-    struct Instr
-    {
-        duint addr = 0;
+    struct Instr {
+        ut64 addr = 0;
+        ut64 size = 0;
         Text text;
+        Text fullText;
+        QString plainText;
         std::vector<unsigned char> opcode; //instruction bytes
+
+        bool empty() const { return size == 0; }
+        bool contains(ut64 addr) const;
     };
 
-    struct Block
-    {
+    struct Token {
+        int start;
+        int length;
+        QString type;
+        Instr *instr;
+        QString name;
+        QString content;
+    };
+
+    struct DisassemblyBlock {
         Text header_text;
         std::vector<Instr> instrs;
-        std::vector<duint> exits;
-        duint entry = 0;
-        duint true_path = 0;
-        duint false_path = 0;
+        ut64 entry = 0;
+        ut64 true_path = 0;
+        ut64 false_path = 0;
         bool terminal = false;
         bool indirectcall = false;
     };
 
-    struct DisassemblerBlock
-    {
-        DisassemblerBlock() {}
-        explicit DisassemblerBlock(Block & block)
-            : block(block) {}
+public:
+    DisassemblerGraphView(QWidget *parent, CutterSeekable *seekable, MainWindow *mainWindow,
+                          QList<QAction *> additionalMenuAction);
+    ~DisassemblerGraphView() override;
+    std::unordered_map<ut64, DisassemblyBlock> disassembly_blocks;
+    virtual void drawBlock(QPainter &p, GraphView::GraphBlock &block, bool interactive) override;
+    virtual void blockClicked(GraphView::GraphBlock &block, QMouseEvent *event, QPoint pos) override;
+    virtual void blockDoubleClicked(GraphView::GraphBlock &block, QMouseEvent *event,
+                                    QPoint pos) override;
+    virtual bool helpEvent(QHelpEvent *event) override;
+    virtual void blockHelpEvent(GraphView::GraphBlock &block, QHelpEvent *event, QPoint pos) override;
+    virtual GraphView::EdgeConfiguration edgeConfiguration(GraphView::GraphBlock &from,
+                                                           GraphView::GraphBlock *to,
+                                                           bool interactive) override;
+    virtual void blockTransitionedTo(GraphView::GraphBlock *to) override;
+    virtual bool event(QEvent *event) override;
 
-        Block block;
-        std::vector<DisassemblerEdge> edges;
-        std::vector<duint> incoming;
-        std::vector<duint> new_exits;
+    void loadCurrentGraph();
+    QString windowTitle;
 
-        qreal x = 0.0;
-        qreal y = 0.0;
-        int width = 0;
-        int height = 0;
-        int col = 0;
-        int col_count = 0;
-        int row = 0;
-        int row_count = 0;
+    int getWidth() { return width; }
+    int getHeight() { return height; }
+    std::unordered_map<ut64, GraphBlock> getBlocks() { return blocks; }
+    using EdgeConfigurationMapping = std::map<std::pair<ut64, ut64>, EdgeConfiguration>;
+    EdgeConfigurationMapping getEdgeConfigurations();
+
+    enum class GraphExportType {
+        Png, Jpeg, Svg, GVDot, GVJson,
+        GVGif, GVPng, GVJpeg, GVPostScript, GVSvg
     };
+    void exportGraph(QString filePath, GraphExportType type);
+    void exportR2GraphvizGraph(QString filePath, QString type);
 
-    struct Function
-    {
-        bool ready;
-        duint entry;
-        duint update_id;
-        std::vector<Block> blocks;
-    };
-
-    struct Analysis
-    {
-        duint entry = 0;
-        std::unordered_map<duint, Function> functions;
-        bool ready = false;
-        duint update_id = 0;
-        QString status = "Analyzing...";
-
-        bool find_instr(duint addr, duint & func, duint & instr)
-        {
-            //TODO implement
-            Q_UNUSED(addr);
-            Q_UNUSED(func);
-            Q_UNUSED(instr);
-            return false;
-        }
-
-        //dummy class
-    };
-
-    enum class LayoutType
-    {
-        Wide,
-        Medium,
-        Narrow,
-    };
-
-    DisassemblerGraphView(QWidget *parent, MainWindow *main);
-    ~DisassemblerGraphView();
-    void initFont();
-    void adjustSize(int width, int height);
-    void resizeEvent(QResizeEvent* event);
-    duint get_cursor_pos();
-    void set_cursor_pos(duint addr);
-    std::tuple<duint, duint> get_selection_range();
-    void set_selection_range(std::tuple<duint, duint> range);
-    void copy_address();
-    //void analysis_thread_proc();
-    //void closeRequest();
-    void paintNormal(QPainter & p, QRect & viewportRect, int xofs, int yofs);
-    void paintOverview(QPainter & p, QRect & viewportRect, int xofs, int yofs);
-    void paintEvent(QPaintEvent* event);
-    bool isMouseEventInBlock(QMouseEvent* event);
-    duint getInstrForMouseEvent(QMouseEvent* event);
-    bool getTokenForMouseEvent(QMouseEvent* event, Token & token);
-    bool find_instr(duint addr, Instr & instr);
-    void mousePressEvent(QMouseEvent* event);
-    void mouseMoveEvent(QMouseEvent* event);
-    void mouseReleaseEvent(QMouseEvent* event);
-    void mouseDoubleClickEvent(QMouseEvent* event);
-    void prepareGraphNode(DisassemblerBlock & block);
-    void adjustGraphLayout(DisassemblerBlock & block, int col, int row);
-    void computeGraphLayout(DisassemblerBlock & block);
-    void setupContextMenu();
-    void keyPressEvent(QKeyEvent* event);
-
-    template<typename T>
-    using Matrix = std::vector<std::vector<T>>;
-    using EdgesVector = Matrix<std::vector<bool>>;
-    bool isEdgeMarked(EdgesVector & edges, int row, int col, int index);
-    void markEdge(EdgesVector & edges, int row, int col, int index, bool used = true);
-    int findHorizEdgeIndex(EdgesVector & edges, int row, int min_col, int max_col);
-    int findVertEdgeIndex(EdgesVector & edges, int col, int min_row, int max_row);
-    DisassemblerEdge routeEdge(EdgesVector & horiz_edges, EdgesVector & vert_edges, Matrix<bool> & edge_valid, DisassemblerBlock & start, DisassemblerBlock & end, QColor color);
-    void renderFunction(Function & func);
-    void show_cur_instr(bool force = false);
-    bool navigate(duint addr);
-    void fontChanged();
-    void setGraphLayout(LayoutType layout);
-
-    //VaHistory mHistory;
-
-signals:
-    void displaySnowmanWidget();
-
+    /**
+     * @brief keep the current addr of the fcn of Graph
+     * Everytime overview updates its contents, it compares this value with the one in Graph
+     * if they aren't same, then Overview needs to update the pixmap cache.
+     */
+    ut64 currentFcnAddr = RVA_INVALID; // TODO: make this less public
 public slots:
-    void updateTimerEvent();
-    void on_seekChanged(RVA);
-    //void loadGraphSlot(BridgeCFGraphList* graph, duint addr);
-    void graphAtSlot(duint addr);
-    void updateGraphSlot();
-    void followDisassemblerSlot();
+    void refreshView();
     void colorsUpdatedSlot();
     void fontsUpdatedSlot();
-    void shortcutsUpdatedSlot();
-    void toggleOverviewSlot();
-    void toggleSummarySlot();
-    //void selectionGetSlot(SELECTIONDATA* selection);
-    void tokenizerConfigUpdatedSlot();
-    void loadCurrentGraph();
-    //void disassembleAtSlot(dsint va, dsint cip);
-    void gotoExpressionSlot();
-    void gotoOriginSlot();
-    void gotoPreviousSlot();
-    void gotoNextSlot();
-    void toggleSyncOriginSlot();
-    void followActionSlot();
-    void refreshSlot();
-    void saveImageSlot();
-    void setCommentSlot();
-    void setLabelSlot();
-    void xrefSlot();
-    void decompileSlot();
+    void onSeekChanged(RVA addr);
+    void zoom(QPointF mouseRelativePos, double velocity);
+    void setZoom(QPointF mouseRelativePos, double scale);
+    void zoomIn();
+    void zoomOut();
+    void zoomReset();
+
+    void takeTrue();
+    void takeFalse();
+
+    void nextInstr();
+    void prevInstr();
+
+    void copySelection();
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void wheelEvent(QWheelEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
+
+    void paintEvent(QPaintEvent *event) override;
+    void blockContextMenuRequested(GraphView::GraphBlock &block, QContextMenuEvent *event,
+                                   QPoint pos) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+
+private slots:
+    void on_actionExportGraph_triggered();
+    void onActionHighlightBITriggered();
+    void onActionUnhighlightBITriggered();
 
 private:
-    CutterCore *mCore;
-    MainWindow *mMain;
-    QString status;
-    Analysis analysis;
-    duint function;
-    QTimer* updateTimer;
-    int baseline;
+    bool transition_dont_seek = false;
+
+    Token *highlight_token;
+    // Font data
+    std::unique_ptr<CachedFontMetrics<qreal>> mFontMetrics;
     qreal charWidth;
     int charHeight;
     int charOffset;
-    int width;
-    int height;
-    int renderWidth;
-    int renderHeight;
-    int renderXOfs;
-    int renderYOfs;
-    duint cur_instr;
-    int scroll_base_x;
-    int scroll_base_y;
-    duint update_id;
-    bool scroll_mode;
-    bool ready;
-    int* desired_pos;
-    std::unordered_map<duint, DisassemblerBlock> blocks;
-    HighlightToken* highlight_token;
-    std::vector<int> col_edge_x;
-    std::vector<int> row_edge_y;
-    CachedFontMetrics* mFontMetrics;
-    MenuBuilder* mMenuBuilder;
-    bool drawOverview;
-    bool onlySummary;
-    bool syncOrigin;
-    int overviewXOfs;
-    int overviewYOfs;
-    qreal overviewScale;
-    duint mCip;
-    bool forceCenter;
-    bool saveGraph;
-    bool mHistoryLock; //Don't add a history while going to previous/next
-    LayoutType layoutType;
+    int baseline;
+    bool emptyGraph;
+    ut64 currentBlockAddress = RVA_INVALID;
 
-    QAction* mToggleOverview;
-    QAction* mToggleSummary;
-    QAction* mToggleSyncOrigin;
+    DisassemblyContextMenu *blockMenu;
+    QMenu *contextMenu;
+
+    void connectSeekChanged(bool disconnect);
+
+    void initFont();
+    void prepareGraphNode(GraphBlock &block);
+    void cleanupEdges();
+    Token *getToken(Instr *instr, int x);
+    QPoint getTextOffset(int line) const;
+    QPoint getInstructionOffset(const DisassemblyBlock &block, int line) const;
+    RVA getAddrForMouseEvent(GraphBlock &block, QPoint *point);
+    Instr *getInstrForMouseEvent(GraphBlock &block, QPoint *point, bool force = false);
+    /**
+     * @brief Get instructions placement and size relative to block.
+     * Inefficient don't use this function when iterating over all instructions.
+     * @param block
+     * @param addr
+     * @return
+     */
+    QRectF getInstrRect(GraphView::GraphBlock &block, RVA addr) const;
+    void showInstruction(GraphView::GraphBlock &block, RVA addr);
+    const Instr *instrForAddress(RVA addr);
+    DisassemblyBlock *blockForAddress(RVA addr);
+    void seekLocal(RVA addr, bool update_viewport = true);
+    void seekInstruction(bool previous_instr);
+    CutterSeekable *seekable = nullptr;
+    QList<QShortcut *> shortcuts;
+    QList<RVA> breakpoints;
 
     QColor disassemblyBackgroundColor;
+    QColor disassemblySelectedBackgroundColor;
     QColor disassemblySelectionColor;
-    QColor disassemblyTracedColor;
-    QColor disassemblyTracedSelectionColor;
+    QColor PCSelectionColor;
     QColor jmpColor;
     QColor brtrueColor;
     QColor brfalseColor;
     QColor retShadowColor;
     QColor indirectcallShadowColor;
-    QColor backgroundColor;
     QColor mAutoCommentColor;
     QColor mAutoCommentBackgroundColor;
     QColor mCommentColor;
@@ -354,13 +225,24 @@ private:
     QColor mBreakpointColor;
     QColor mDisabledBreakpointColor;
 
-    //BridgeCFGraph currentGraph;
-    std::unordered_map<duint, duint> currentBlockMap;
-    //QBeaEngine disasm;
-    GotoDialog* mGoto;
-    XrefBrowseDialog* mXrefDlg;
+    QAction actionExportGraph;
+    QAction actionUnhighlight;
+    QAction actionUnhighlightInstruction;
 
-    void addReferenceAction(QMenu* menu, duint addr);
+    QLabel *emptyText = nullptr;
+
+    static const int KEY_ZOOM_IN;
+    static const int KEY_ZOOM_OUT;
+    static const int KEY_ZOOM_RESET;
+signals:
+    void viewRefreshed();
+    void viewZoomed();
+    void graphMoved();
+    void resized();
+    void nameChanged(const QString &name);
+
+public:
+    bool isGraphEmpty()     { return emptyGraph; }
 };
 
 #endif // DISASSEMBLERGRAPHVIEW_H

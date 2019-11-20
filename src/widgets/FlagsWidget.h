@@ -1,19 +1,25 @@
 #ifndef FLAGSWIDGET_H
 #define FLAGSWIDGET_H
 
+#include <memory>
+
 #include <QAbstractItemModel>
 #include <QSortFilterProxyModel>
-#include <memory>
-#include "cutter.h"
-#include "DockWidget.h"
+
+#include "core/Cutter.h"
+#include "CutterDockWidget.h"
+#include "CutterTreeWidget.h"
+#include "AddressableItemList.h"
+#include "AddressableItemModel.h"
 
 class MainWindow;
 class QTreeWidgetItem;
+class FlagsWidget;
 
 
-class FlagsModel: public QAbstractListModel
+class FlagsModel: public AddressableItemModel<QAbstractListModel>
 {
-    Q_OBJECT
+    friend FlagsWidget;
 
 private:
     QList<FlagDescription> *flags;
@@ -22,26 +28,26 @@ public:
     enum Columns { OFFSET = 0, SIZE, NAME, COUNT };
     static const int FlagDescriptionRole = Qt::UserRole;
 
-    FlagsModel(QList<FlagDescription> *flags, QObject *parent = 0);
+    FlagsModel(QList<FlagDescription> *flags, QObject *parent = nullptr);
 
-    int rowCount(const QModelIndex &parent = QModelIndex()) const;
-    int columnCount(const QModelIndex &parent = QModelIndex()) const;
+    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
+    int columnCount(const QModelIndex &parent = QModelIndex()) const override;
 
-    QVariant data(const QModelIndex &index, int role) const;
-    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const;
+    QVariant data(const QModelIndex &index, int role) const override;
+    QVariant headerData(int section, Qt::Orientation orientation, int role = Qt::DisplayRole) const override;
 
-    void beginReloadFlags();
-    void endReloadFlags();
+    RVA address(const QModelIndex &index) const override;
+    QString name(const QModelIndex &index) const override;
 };
 
 
 
-class FlagsSortFilterProxyModel : public QSortFilterProxyModel
+class FlagsSortFilterProxyModel : public AddressableFilterProxyModel
 {
     Q_OBJECT
 
 public:
-    FlagsSortFilterProxyModel(FlagsModel *source_model, QObject *parent = 0);
+    FlagsSortFilterProxyModel(FlagsModel *source_model, QObject *parent = nullptr);
 
 protected:
     bool filterAcceptsRow(int row, const QModelIndex &parent) const override;
@@ -50,38 +56,37 @@ protected:
 
 
 
-namespace Ui
-{
-    class FlagsWidget;
+namespace Ui {
+class FlagsWidget;
 }
 
-class FlagsWidget : public DockWidget
+class FlagsWidget : public CutterDockWidget
 {
     Q_OBJECT
 
 public:
-    explicit FlagsWidget(MainWindow *main, QWidget *parent = 0);
+    explicit FlagsWidget(MainWindow *main, QAction *action = nullptr);
     ~FlagsWidget();
 
-    void setup() override;
-    void refresh() override;
-
 private slots:
-    void on_flagsTreeView_doubleClicked(const QModelIndex &index);
     void on_flagspaceCombo_currentTextChanged(const QString &arg1);
 
+    void on_actionRename_triggered();
+    void on_actionDelete_triggered();
+
     void flagsChanged();
+    void refreshFlagspaces();
 
 private:
     std::unique_ptr<Ui::FlagsWidget> ui;
-    MainWindow      *main;
+    MainWindow *main;
 
     FlagsModel *flags_model;
     FlagsSortFilterProxyModel *flags_proxy_model;
     QList<FlagDescription> flags;
+    CutterTreeWidget *tree;
 
     void refreshFlags();
-    void refreshFlagspaces();
     void setScrollMode();
 };
 
