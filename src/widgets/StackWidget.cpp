@@ -19,8 +19,11 @@ StackWidget::StackWidget(MainWindow *main, QAction *action) :
     // Setup stack model
     viewStack->setFont(Config()->getFont());
     viewStack->setModel(modelStack);
+    viewStack->verticalHeader()->setSectionResizeMode(QHeaderView::Stretch);
     viewStack->verticalHeader()->hide();
+    viewStack->setShowGrid(false);
     viewStack->setSortingEnabled(true);
+    viewStack->setAutoScroll(false);
     viewStack->setHorizontalScrollMode(QAbstractItemView::ScrollPerPixel);
     ui->verticalLayout->addWidget(viewStack);
     viewStack->setEditTriggers(viewStack->editTriggers() &
@@ -34,7 +37,7 @@ StackWidget::StackWidget(MainWindow *main, QAction *action) :
     });
 
     connect(Core(), &CutterCore::refreshAll, this, &StackWidget::updateContents);
-    connect(Core(), &CutterCore::seekChanged, this, &StackWidget::updateContents);
+    connect(Core(), &CutterCore::registersChanged, this, &StackWidget::updateContents);
     connect(Core(), &CutterCore::stackChanged, this, &StackWidget::updateContents);
     connect(Config(), &Configuration::fontsUpdated, this, &StackWidget::fontsUpdatedSlot);
     connect(viewStack, SIGNAL(doubleClicked(const QModelIndex &)), this,
@@ -55,7 +58,7 @@ StackWidget::~StackWidget() = default;
 
 void StackWidget::updateContents()
 {
-    if (!refreshDeferrer->attemptRefresh(nullptr)) {
+    if (!refreshDeferrer->attemptRefresh(nullptr) || Core()->isDebugTaskInProgress()) {
         return;
     }
 
@@ -143,37 +146,17 @@ StackModel::StackModel(QObject *parent)
 
 void StackModel::reload()
 {
-    QJsonArray stackValues = Core()->getStack().array();
+    QList<QJsonObject> stackItems = Core()->getStack();
 
     beginResetModel();
     values.clear();
-    for (const QJsonValue &value : stackValues) {
-        QJsonObject stackItem = value.toObject();
+    for (const QJsonObject &stackItem : stackItems) {
         Item item;
 
         item.offset = stackItem["addr"].toVariant().toULongLong();
         item.value = RAddressString(stackItem["value"].toVariant().toULongLong());
+        item.refDesc = Core()->formatRefDesc(stackItem["ref"].toObject());
 
-
-        QJsonValue refObject = stackItem["ref"];
-        if (!refObject.isUndefined()) { // check that the key exists
-            QString ref = refObject.toString();
-            if (ref.contains("ascii") && ref.count("-->") == 1) {
-                ref = Core()->cmdj(QString("pszj @ [%1]").arg(item.offset)).object().value("string").toString();
-            }
-            item.description = ref;
-
-
-            if (refObject.toString().contains("ascii") && refObject.toString().count("-->") == 1) {
-                item.descriptionColor = QVariant(QColor(243, 156, 17));
-            } else if (ref.contains("program R X") && ref.count("-->") == 0) {
-                item.descriptionColor = QVariant(QColor(Qt::red));
-            } else if (ref.contains("stack") && ref.count("-->") == 0) {
-                item.descriptionColor = QVariant(QColor(Qt::cyan));
-            } else if (ref.contains("library") && ref.count("-->") == 0) {
-                item.descriptionColor = QVariant(QColor(Qt::green));
-            }
-        }
         values.push_back(item);
     }
     endResetModel();
@@ -204,14 +187,14 @@ QVariant StackModel::data(const QModelIndex &index, int role) const
         case ValueColumn:
             return item.value;
         case DescriptionColumn:
-            return item.description;
+            return item.refDesc.ref;
         default:
             return QVariant();
         }
     case Qt::ForegroundRole:
         switch (index.column()) {
         case DescriptionColumn:
-            return item.descriptionColor;
+            return item.refDesc.refColor;
         default:
             return QVariant();
         }

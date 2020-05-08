@@ -76,8 +76,9 @@ ColorThemeWorker::ColorThemeWorker(QObject *parent) : QObject (parent)
     } else {
         QMessageBox::critical(nullptr,
             tr("Standard themes not found"),
-            tr("The radare2 standard themes could not be found. "
+            tr("The radare2 standard themes could not be found in '%1'. "
                "Most likely, radare2 is not properly installed.")
+                .arg(currDir.path())
         );
     }
 }
@@ -166,9 +167,9 @@ QJsonDocument ColorThemeWorker::getTheme(const QString& themeName) const
     QString curr = Config()->getColorTheme();
 
     if (themeName != curr) {
-        Core()->cmd(QString("eco %1").arg(themeName));
+        Core()->cmdRaw(QString("eco %1").arg(themeName));
         theme = Core()->cmdj("ecj").object().toVariantMap();
-        Core()->cmd(QString("eco %1").arg(curr));
+        Core()->cmdRaw(QString("eco %1").arg(curr));
     } else {
         theme = Core()->cmdj("ecj").object().toVariantMap();
     }

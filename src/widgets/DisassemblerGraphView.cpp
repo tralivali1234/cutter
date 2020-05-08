@@ -226,7 +226,7 @@ void DisassemblerGraphView::loadCurrentGraph()
     .set("asm.lines.fcn", false);
 
     QJsonArray functions;
-    RAnalFunction *fcn = Core()->functionAt(seekable->getOffset());
+    RAnalFunction *fcn = Core()->functionIn(seekable->getOffset());
     if (fcn) {
         currentFcnAddr = fcn->addr;
         QJsonDocument functionsDoc = Core()->cmdj("agJ " + RAddressString(fcn->addr));
@@ -996,18 +996,7 @@ void DisassemblerGraphView::blockDoubleClicked(GraphView::GraphBlock &block, QMo
                                                QPoint pos)
 {
     Q_UNUSED(event);
-
-    RVA instr = getAddrForMouseEvent(block, &pos);
-    if (instr == RVA_INVALID) {
-        return;
-    }
-    QList<XrefDescription> refs = Core()->getXRefs(instr, false, false);
-    if (refs.length()) {
-        seekable->seek(refs.at(0).to);
-    }
-    if (refs.length() > 1) {
-        qWarning() << "Too many references here. Weird behaviour expected.";
-    }
+    seekable->seekToReference(getAddrForMouseEvent(block, &pos));
 }
 
 void DisassemblerGraphView::blockHelpEvent(GraphView::GraphBlock &block, QHelpEvent *event,
@@ -1102,7 +1091,7 @@ void DisassemblerGraphView::on_actionExportGraph_triggered()
     }
 
     QString defaultName = "graph";
-    if (auto f = Core()->functionAt(currentFcnAddr)) {
+    if (auto f = Core()->functionIn(currentFcnAddr)) {
         QString functionName = f->name;
         // don't confuse image type guessing and make c++ names somewhat usable
         functionName.replace(QRegularExpression("[.:]"), "_");
@@ -1168,12 +1157,14 @@ void DisassemblerGraphView::onActionUnhighlightBITriggered()
 
 void DisassemblerGraphView::exportGraph(QString filePath, GraphExportType type)
 {
+    bool graphTransparent = Config()->getBitmapTransparentState();
+    double graphScaleFactor = Config()->getBitmapExportScaleFactor();
     switch (type) {
     case GraphExportType::Png:
-        this->saveAsBitmap(filePath, "png");
+        this->saveAsBitmap(filePath, "png", graphScaleFactor, graphTransparent);
         break;
     case GraphExportType::Jpeg:
-        this->saveAsBitmap(filePath, "jpg");
+        this->saveAsBitmap(filePath, "jpg", graphScaleFactor, false);
         break;
     case GraphExportType::Svg:
         this->saveAsSvg(filePath);
@@ -1186,7 +1177,7 @@ void DisassemblerGraphView::exportGraph(QString filePath, GraphExportType type)
             return;
         }
         QTextStream fileOut(&file);
-        fileOut << Core()->cmd(QString("agfd 0x%1").arg(currentFcnAddr, 0, 16));
+        fileOut << Core()->cmdRaw(QString("agfd 0x%1").arg(currentFcnAddr, 0, 16));
     }
     break;
 
@@ -1215,8 +1206,9 @@ void DisassemblerGraphView::exportR2GraphvizGraph(QString filePath, QString type
 {
     TempConfig tempConfig;
     tempConfig.set("graph.gv.format", type);
-    qWarning() << Core()->cmdRaw(QString("agfw \"%1\" @ 0x%2")
-                                 .arg(filePath).arg(currentFcnAddr, 0, 16));
+    qWarning() << Core()->cmdRawAt(QString("agfw \"%1\"")
+                                 .arg(filePath),
+                                 currentFcnAddr);
 }
 
 void DisassemblerGraphView::mousePressEvent(QMouseEvent *event)

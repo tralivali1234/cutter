@@ -13,11 +13,19 @@ matrix:
   include:
   - name: Linux QMake + Deploy
     os: linux
+    dist: xenial
     env: BUILD_SYSTEM=qmake DEPLOY=1
     addons:
       apt:
         packages:
-         - ninja-build
+         - mesa-common-dev
+         - libgl1-mesa-glx
+         - libgl1-mesa-dev
+         - libxkbcommon-x11-dev
+         - ninja-build/xenial-backports
+    before_install:
+      - pyenv global 3.7
+      - pip install meson
 
   - name: Linux CMake
     os: linux
@@ -25,10 +33,11 @@ matrix:
     addons:
       apt:
         packages:
+         - mesa-common-dev
          - ninja-build
          - libgraphviz-dev
     before_install:
-      - pyenv global 3.7.1
+      - pyenv global 3.7
       - pip install meson
 
   - name: Linux Ubuntu 16.04
@@ -46,7 +55,7 @@ matrix:
     before_install:
       - pyenv install 3.5.2
       - pyenv global 3.5.2
-      - pip install meson
+      - pip install meson==0.52.1
 
 
   - name: macOS QMake + Deploy
@@ -66,10 +75,13 @@ matrix:
       apt:
         packages:
          - doxygen
-         - python3-sphinx
-         - python3-breathe
-         - python3-sphinx-rtd-theme
          - libgraphviz-dev
+    before_install:
+      - pyenv global 3.7
+      - pip install -U sphinx
+      - pip install -U breathe
+      - pip install -U sphinx-rtd-theme
+      - pip install -U recommonmark
     install: ~
     before_script: ~
     after_success: ~
@@ -98,6 +110,7 @@ dist: bionic
 addons:
   homebrew:
     brewfile: scripts/Brewfile
+    update: true
 
 install:
   - if [[ "$BUILD_SYSTEM" != "cmake_nodep" ]]; then
@@ -117,7 +130,7 @@ before_script:
   - cd radare2
   - if [[ "$BUILD_SYSTEM" == "qmake" ]]; then
         if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then
-            INSTALL_TARGET=install sys/install.sh;
+            INSTALL_TARGET=install sys/install.sh /usr;
         else
             LDFLAGS=-headerpad_max_install_names INSTALL_TARGET=install sys/install.sh;
         fi
@@ -203,6 +216,7 @@ after_success:
       mkdir -p Cutter.app/Contents/Resources/r2/share &&
       cp -a /usr/local/share/radare2 Cutter.app/Contents/Resources/r2/share/ &&
       "$TRAVIS_BUILD_DIR/scripts/r2ghidra.sh" -DCMAKE_INSTALL_PREFIX="`pwd`/Cutter.app/Contents/Resources/r2" -DBUILD_CUTTER_PLUGIN=ON -DCUTTER_INSTALL_PLUGDIR="`pwd`/Cutter.app/Contents/Resources/plugins/native" -DCUTTER_SOURCE_DIR="$TRAVIS_BUILD_DIR" &&
+      "$TRAVIS_BUILD_DIR/scripts/r2dec.sh" --prefix="`pwd`/Cutter.app/Contents/Resources/r2" &&
       mkdir image && cp -a Cutter.app image/ &&
       export VOL_NAME="Cutter v${CUTTER_VERSION}" &&
       export DMG_TMP_FILE="Cutter-v$CUTTER_VERSION-x64.macOS-tmp.dmg" &&
@@ -224,6 +238,7 @@ after_success:
       cp ../src/translations/*.qm appdir/usr/bin/translations/ &&
       "$TRAVIS_BUILD_DIR/scripts/appimage_embed_python.sh" appdir &&
       "$TRAVIS_BUILD_DIR/scripts/r2ghidra.sh" -DCMAKE_INSTALL_PREFIX="`pwd`/appdir/usr" -DBUILD_CUTTER_PLUGIN=ON -DCUTTER_SOURCE_DIR="$TRAVIS_BUILD_DIR" &&
+      "$TRAVIS_BUILD_DIR/scripts/r2dec.sh" --prefix=`pwd`/appdir/usr &&
       wget -c "https://github.com/probonopd/linuxdeployqt/releases/download/6/linuxdeployqt-6-x86_64.AppImage" &&
       chmod a+x linuxdeployqt*.AppImage &&
       rm -fv "$TRAVIS_BUILD_DIR/cutter-deps/qt/plugins/imageformats/libqjp2.so" &&

@@ -25,7 +25,7 @@ XrefsDialog::XrefsDialog(MainWindow *main, QWidget *parent) :
     ui->fromTreeWidget->setModel(&fromModel);
 
     // Modify the splitter's location to show more Disassembly instead of empty space. Not possible via Designer
-    ui->splitter->setSizes(QList<int>() << 100 << 200);
+    ui->splitter->setSizes(QList<int>() << 300 << 400);
 
     // Increase asm text edit margin
     QTextDocument *asm_docu = ui->previewTextEdit->document();
@@ -120,7 +120,10 @@ void XrefsDialog::updatePreview(RVA addr)
     TempConfig tempConfig;
     tempConfig.set("scr.html", true);
     tempConfig.set("scr.color", COLOR_MODE_16M);
+    tempConfig.set("asm.lines", false);
+    tempConfig.set("asm.bytes", false);
 
+    // Use cmd because cmRaw cannot handle the output properly. Why?
     QString disas = Core()->cmd("pd--20 @ " + QString::number(addr));
     ui->previewTextEdit->document()->setHtml(disas);
 
@@ -210,14 +213,14 @@ QVariant XrefModel::data(const QModelIndex &index, int role) const
         switch (index.column()) {
         case OFFSET:
             return to ? xref.from_str : xref.to_str;
+        case TYPE:
+            return xrefTypeString(xref.type);
         case CODE:
             if (to || xref.type != "DATA") {
                 return Core()->disassembleSingleInstruction(xref.from);
             } else {
                 return QString();
             }
-        case TYPE:
-            return xrefTypeString(xref.type);
         }
         return QVariant();
     case FlagDescriptionRole:
@@ -237,10 +240,10 @@ QVariant XrefModel::headerData(int section, Qt::Orientation orientation, int rol
         switch (section) {
         case OFFSET:
             return tr("Address");
-        case CODE:
-            return tr("Code");
         case TYPE:
             return tr("Type");
+        case CODE:
+            return tr("Code");
         default:
             return QVariant();
         }

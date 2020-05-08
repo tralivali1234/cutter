@@ -13,6 +13,7 @@
 #include <QAbstractButton>
 #include <QDockWidget>
 #include <QMenu>
+#include <QComboBox>
 
 static QAbstractItemView::ScrollMode scrollMode()
 {
@@ -23,16 +24,18 @@ static QAbstractItemView::ScrollMode scrollMode()
 
 namespace qhelpers {
 
-QString formatBytecount(const long bytecount)
+QString formatBytecount(const uint64_t bytecount)
 {
-    if (bytecount == 0)
+    if (bytecount == 0) {
         return "0";
-    const int exp = log(bytecount) / log(1000);
+    }
+
+    const int exp = log(bytecount) / log(1024);
     constexpr char suffixes[] = {' ', 'k', 'M', 'G', 'T', 'P', 'E'};
 
     QString str;
     QTextStream stream(&str);
-    stream << qSetRealNumberPrecision(3) << bytecount / pow(1000, exp)
+    stream << qSetRealNumberPrecision(3) << bytecount / pow(1024, exp)
            << ' ' << suffixes[exp] << 'B';
     return stream.readAll();
 }
@@ -253,6 +256,17 @@ qreal devicePixelRatio(const QPaintDevice *p)
 #else
     return p->devicePixelRatio();
 #endif
+}
+
+void selectIndexByData(QComboBox *widget, QVariant data, int defaultIndex)
+{
+    for (int i = 0; i < widget->count(); i++) {
+        if (widget->itemData(i) == data) {
+            widget->setCurrentIndex(i);
+            return;
+        }
+    }
+    widget->setCurrentIndex(defaultIndex);
 }
 
 

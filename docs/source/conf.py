@@ -24,9 +24,9 @@ copyright = '2019, The Cutter Developers'
 author = 'The Cutter Developers'
 
 # The short X.Y version
-version = '1.9'
+version = '1.10'
 # The full version, including alpha/beta/rc tags
-release = '1.9.0'
+release = '1.10.3-pre2'
 
 
 # -- General configuration ---------------------------------------------------
@@ -40,6 +40,7 @@ release = '1.9.0'
 # ones.
 extensions = [
     'breathe',
+    'recommonmark',
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -49,7 +50,10 @@ templates_path = ['_templates']
 # You can specify multiple suffix as a list of string:
 #
 # source_suffix = '.rst'
-source_suffix = ['.rst', '.md']
+source_suffix = {
+    '.rst': 'restructuredtext',
+    '.md': 'markdown',
+}
 
 # The master toctree document.
 master_doc = 'index'
@@ -105,7 +109,7 @@ html_logo = '../../src/img/cutter.ico'
 #   'using/windows': ['windowssidebar.html', 'searchbox.html'],
 # }
 html_sidebars = {
-   '**': ['globaltoc.html'],
+   '**': ['globaltoc.html', 'searchbox.html'],
 }
 
 # -- Options for HTMLHelp output ---------------------------------------------

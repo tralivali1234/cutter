@@ -18,9 +18,10 @@ namespace KSyntaxHighlighting {
 class QSyntaxHighlighter;
 class QTextDocument;
 
+
 enum ColorFlags {
     LightFlag = 1,
-    DarkFlag = 2
+    DarkFlag = 2,
 };
 
 struct CutterInterfaceTheme {
@@ -40,6 +41,7 @@ private:
 #ifdef CUTTER_ENABLE_KSYNTAXHIGHLIGHTING
     KSyntaxHighlighting::Repository *kSyntaxHighlightingRepository;
 #endif
+    bool outputRedirectEnabled = true;
 
     // Colors
     void loadBaseThemeNative();
@@ -47,6 +49,7 @@ private:
     void loadNativeStylesheet();
     void loadLightStylesheet();
     void loadDarkStylesheet();
+    void loadMidnightStylesheet();
 
     // Asm Options
     void applySavedAsmOptions();
@@ -138,6 +141,11 @@ public:
 
     QString getColorTheme() const     { return s.value("theme", "cutter").toString(); }
     void setColorTheme(const QString &theme);
+    /**
+     * @brief Change current color theme if it doesnt't much native theme's darkness.
+     */
+    void adjustColorThemeDarkness();
+    int colorThemeDarkness(const QString &colorTheme) const;
 
     void setColor(const QString &name, const QColor &color);
     const QColor getColor(const QString &name) const;
@@ -171,6 +179,25 @@ public:
     bool getDecompilerAutoRefreshEnabled();
     void setDecompilerAutoRefreshEnabled(bool enabled);
 
+    /**
+     * @brief Getters and setters for the transaparent option state and scale factor for bitmap graph exports.
+     */
+    bool getBitmapTransparentState();
+    double getBitmapExportScaleFactor();
+    void setBitmapTransparentState(bool inputValueGraph);
+    void setBitmapExportScaleFactor(double inputValueGraph);
+
+    /**
+     * @brief Enable or disable Cutter output redirection.
+     * Output redirection state can only be changed early during Cutter initalization.
+     * Changing it later will have no effect
+     * @param enabled set this to false for disabling output redirection
+     */
+    void setOutputRedirectionEnabled(bool enabled);
+    bool getOutputRedirectionEnabled() const;
+
+public slots:
+    void refreshFont();
 signals:
     void fontsUpdated();
     void colorsUpdated();

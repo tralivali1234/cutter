@@ -26,39 +26,56 @@ On Linux, you will need:
 * qt5-svg
 * pkgconf
 
-On some Linux distributions, all of those packages can be installed with this single command:
+On Debian-based Linux distributions, all of these packages can be installed with this single command:
 
 ::
 
    sudo apt install git build-essential cmake meson libzip-dev zlib1g-dev qt5-default libqt5svg5-dev
 
+On Arch-based Linux distributions, build-essential should be replaced by base-devel:
+
+::
+
+   sudo pacman -Syu git base-devel cmake meson qt5-base qt5-svg
+
 Building steps
 ~~~~~~~~~~~~~~
 
 The official way to build Cutter on Linux is by using CMake.
-First clone the repository with its dependencies:
+First, clone the repository with its dependencies:
 
 .. code-block:: sh
 
    git clone --recurse-submodules https://github.com/radareorg/cutter
 
 
-Then just use CMake to build Cutter and its dependency radare2.
+Then invoke CMake to build Cutter and its dependency radare2.
 
 .. code:: sh
 
-   cd cutter/src
-   mkdir build
-   cmake -B build -DCUTTER_USE_BUNDLED_RADARE2=ON
+   cd cutter
+   mkdir build && cd build
+   cmake -DCUTTER_USE_BUNDLED_RADARE2=ON ../src
+   cmake --build .
+
+If your operating system has a newer version of CMake (> v3.12) you can use this cleaner solution:
+
+.. code:: sh
+
+   cd cutter
+   cmake -S src -B build -DCUTTER_USE_BUNDLED_RADARE2=ON
    cmake --build build
 
 
-If you are interested in building Cutter with support for Python plugins,
-Syntax Highlighting, Crash Reporting and more,
-please look at the full list of `CMake Building Options`_.
+.. note::
 
-After the build process is complete, you should be provided with Cutter executable
-that you can start like this:
+   If you are interested in building Cutter with support for Python plugins,
+   Syntax Highlighting, Crash Reporting and more,
+   please look at the full list of `CMake Building Options`_.
+
+
+After the build process is complete, you should have the Cutter executable in the `build` folder.
+You can now execute Cutter like this:
 
 .. code:: sh
 
@@ -135,7 +152,7 @@ Install Meson:
 
    python -m pip install meson
 
-To compile Cutter run:
+To compile Cutter, run:
 
 .. code:: batch
 
@@ -221,8 +238,8 @@ Or if one wants to explicitely disable an option:
 Compiling Cutter with Breakpad support
 --------------------------------------
 
-If you want to build Cutter with crash handling system, you want prepare Breakpad before.
-For this simply run one of the scripts (according to your OS) from root Cutter directory:
+If you want to build Cutter with crash handling system, you will want to first prepare Breakpad.
+For this, simply run one of the scripts (according to your OS) from root Cutter directory:
     
 .. code:: sh
 
@@ -243,7 +260,9 @@ so it contains ``$CUSTOM_BREAKPAD_PREFIX/lib/pkgconfig``. For this simply run
 Troubleshooting
 ---------------
 
-   Cmake: qt development package not found
+* Cmake can't find Qt
+
+    Cmake: qt development package not found
 
 Depending on how Qt installed (Distribution packages or using the Qt
 installer application), CMake may not be able to find it by itself if it
@@ -256,4 +275,15 @@ containing bin/, lib/, include/, etc.) and specify it to CMake using
 
    rm CMakeCache.txt # the cache may be polluted with unwanted libraries found before
    cmake -DCMAKE_PREFIX_PATH=/opt/Qt/5.9.1/gcc_64 ..
+
+* R2 libr_***.so cannot be found when running Cutter
+
+   ./Cutter: error while loading shared libraries: libr_lang.so: cannot open shared object file: No such file or directory
+
+The exact r2 .so file that cannot be found may vary. On some systems, the linker by default uses RUNPATH instead of RPATH which is incompatible with the way r2 is currently compiled. It results in some of the r2 libraries not being found when running cutter. You can verify if this is the problem by running `ldd ./Cutter`. If all the r2 libraries are missing you have a different problem.
+The workaround is to either add the `--disable-new-dtags` linker flag when compiling Cutter or add the r2 installation path to LD_LIBRARY_PATH environment variable.
+
+::
+
+   cmake -DCMAKE_EXE_LINKER_FLAGS="-Wl,--disable-new-dtags"  ..
 
