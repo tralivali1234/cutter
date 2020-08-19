@@ -3,8 +3,8 @@
 #include "GraphWidget.h"
 #include "OverviewView.h"
 
-OverviewWidget::OverviewWidget(MainWindow *main, QAction *action) :
-    CutterDockWidget(main, action)
+OverviewWidget::OverviewWidget(MainWindow *main) :
+    CutterDockWidget(main)
 {
     setWindowTitle("Graph Overview");
     setObjectName("Graph Overview");
@@ -13,7 +13,7 @@ OverviewWidget::OverviewWidget(MainWindow *main, QAction *action) :
     setWidget(graphView);
     targetGraphWidget = nullptr;
 
-    connect(graphView, SIGNAL(mouseMoved()), this, SLOT(updateTargetView()));
+    connect(graphView, &OverviewView::mouseMoved, this, &OverviewWidget::updateTargetView);
 
     graphDataRefreshDeferrer = createRefreshDeferrer([this]() {
         updateGraphData();

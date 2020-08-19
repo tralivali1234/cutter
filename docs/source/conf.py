@@ -20,13 +20,13 @@
 # -- Project information -----------------------------------------------------
 
 project = 'Cutter'
-copyright = '2019, The Cutter Developers'
+copyright = '2020, The Cutter Developers'
 author = 'The Cutter Developers'
 
 # The short X.Y version
-version = '1.10'
+version = '1.11'
 # The full version, including alpha/beta/rc tags
-release = '1.10.3-pre2'
+release = '1.11.0'
 
 
 # -- General configuration ---------------------------------------------------
@@ -41,6 +41,7 @@ release = '1.10.3-pre2'
 extensions = [
     'breathe',
     'recommonmark',
+    'sphinx.ext.autosectionlabel'
 ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -73,6 +74,10 @@ exclude_patterns = ['_build']
 # The name of the Pygments (syntax highlighting) style to use.
 pygments_style = 'rainbow_dash'
 
+
+autosectionlabel_prefix_document = True
+autosectionlabel_maxdepth = 2
+
 # -- Options for Breathe -----------------------------------------------------
 
 breathe_projects = { 'cutter': '../doxygen-out/xml' }
@@ -98,6 +103,15 @@ html_logo = '../../src/img/cutter.ico'
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
 # html_static_path = ['static']
+
+html_js_files = [
+    'cutter.js',
+]
+
+html_css_files = [
+    'cutter.css',
+    'admonitions.css'
+]
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.

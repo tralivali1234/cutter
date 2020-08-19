@@ -111,8 +111,8 @@ bool RegisterRefProxyModel::lessThan(const QModelIndex &left, const QModelIndex 
     return leftRegRef.reg < rightRegRef.reg;
 }
 
-RegisterRefsWidget::RegisterRefsWidget(MainWindow *main, QAction *action) :
-    CutterDockWidget(main, action),
+RegisterRefsWidget::RegisterRefsWidget(MainWindow *main) :
+    CutterDockWidget(main),
     ui(new Ui::RegisterRefsWidget),
     tree(new CutterTreeWidget(this)),
     addressableItemContextMenu(this, main)
@@ -147,16 +147,18 @@ RegisterRefsWidget::RegisterRefsWidget(MainWindow *main, QAction *action) :
     connect(search_shortcut, &QShortcut::activated, ui->quickFilterView, &QuickFilterView::showFilter);
     search_shortcut->setContext(Qt::WidgetWithChildrenShortcut);
 
-    connect(ui->quickFilterView, SIGNAL(filterTextChanged(const QString &)), registerRefProxyModel,
-            SLOT(setFilterWildcard(const QString &)));
-    connect(ui->quickFilterView, SIGNAL(filterClosed()), ui->registerRefTreeView, SLOT(setFocus()));
+    connect(ui->quickFilterView, &QuickFilterView::filterTextChanged,
+            registerRefProxyModel, &QSortFilterProxyModel::setFilterWildcard);
+    connect(ui->quickFilterView, &QuickFilterView::filterClosed, ui->registerRefTreeView, [this](){
+        ui->registerRefTreeView->setFocus();
+    });
     setScrollMode();
     connect(Core(), &CutterCore::refreshAll, this, &RegisterRefsWidget::refreshRegisterRef);
     connect(Core(), &CutterCore::registersChanged, this, &RegisterRefsWidget::refreshRegisterRef);
-    connect(actionCopyValue, &QAction::triggered, [ = ] () {
+    connect(actionCopyValue, &QAction::triggered, this, [this] () {
         copyClip(RegisterRefModel::ValueColumn);
     });
-    connect(actionCopyRef, &QAction::triggered, [ = ] () {
+    connect(actionCopyRef, &QAction::triggered, this, [this] () {
         copyClip(RegisterRefModel::RefColumn);
     });
     ui->registerRefTreeView->setContextMenuPolicy(Qt::CustomContextMenu);

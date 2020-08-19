@@ -64,7 +64,7 @@ class SearchWidget : public CutterDockWidget
     Q_OBJECT
 
 public:
-    explicit SearchWidget(MainWindow *main, QAction *action = nullptr);
+    explicit SearchWidget(MainWindow *main);
     ~SearchWidget();
 
 private slots:
@@ -81,6 +81,7 @@ private:
     QList<SearchDescription> search;
 
     void refreshSearch();
+    void checkSearchResultEmpty();
     void setScrollMode();
     void updatePlaceholderText(int index);
 };

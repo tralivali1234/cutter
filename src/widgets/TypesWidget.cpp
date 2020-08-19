@@ -127,8 +127,8 @@ bool TypesSortFilterProxyModel::lessThan(const QModelIndex &left, const QModelIn
 
 
 
-TypesWidget::TypesWidget(MainWindow *main, QAction *action) :
-    CutterDockWidget(main, action),
+TypesWidget::TypesWidget(MainWindow *main) :
+    CutterDockWidget(main),
     ui(new Ui::TypesWidget),
     tree(new CutterTreeWidget(this))
 {
@@ -150,14 +150,14 @@ TypesWidget::TypesWidget(MainWindow *main, QAction *action) :
     setScrollMode();
 
     // Setup custom context menu
-    connect(ui->typesTreeView, SIGNAL(customContextMenuRequested(const QPoint &)),
-            this, SLOT(showTypesContextMenu(const QPoint &)));
+    connect(ui->typesTreeView, &QWidget::customContextMenuRequested,
+            this, &TypesWidget::showTypesContextMenu);
 
     ui->typesTreeView->setContextMenuPolicy(Qt::CustomContextMenu);
 
 
-    connect(ui->quickFilterView, SIGNAL(filterTextChanged(const QString &)), types_proxy_model,
-            SLOT(setFilterWildcard(const QString &)));
+    connect(ui->quickFilterView, &ComboQuickFilterView::filterTextChanged, types_proxy_model,
+            &QSortFilterProxyModel::setFilterWildcard);
 
     connect(ui->quickFilterView, &ComboQuickFilterView::filterTextChanged, this, [this] {
         tree->showItemsNumber(types_proxy_model->rowCount());
@@ -171,7 +171,7 @@ TypesWidget::TypesWidget(MainWindow *main, QAction *action) :
     connect(clearShortcut, &QShortcut::activated, ui->quickFilterView, &ComboQuickFilterView::clearFilter);
     clearShortcut->setContext(Qt::WidgetWithChildrenShortcut);
 
-    connect(Core(), SIGNAL(refreshAll()), this, SLOT(refreshTypes()));
+    connect(Core(), &CutterCore::refreshAll, this, &TypesWidget::refreshTypes);
 
     connect(
         ui->quickFilterView->comboBox(), &QComboBox::currentTextChanged, this,

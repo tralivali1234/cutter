@@ -5,7 +5,6 @@
 #include <QFontDatabase>
 #include <QFile>
 #include <QApplication>
-#include <QLibraryInfo>
 
 #ifdef CUTTER_ENABLE_KSYNTAXHIGHLIGHTING
 #include <KSyntaxHighlighting/repository.h>
@@ -15,6 +14,7 @@
 
 #include "common/ColorThemeWorker.h"
 #include "common/SyntaxHighlighter.h"
+#include "common/ResourcePaths.h"
 
 /* Map with names of themes associated with its color palette
  * (Dark or Light), so for dark interface themes will be shown only Dark color themes
@@ -109,12 +109,13 @@ static const QHash<QString, QVariant> asmOptions = {
     { "asm.lines.fcn",      true },
     { "asm.flags.offset",   false },
     { "asm.emu",            false },
+    { "emu.str",            false},
     { "asm.cmt.right",      true },
     { "asm.cmt.col",        35 },
     { "asm.var.summary",    false },
     { "asm.bytes",          false },
     { "asm.size",           false },
-    { "asm.bytespace",      false },
+    { "asm.bytes.space",    false },
     { "asm.lbytes",         true },
     { "asm.nbytes",         10 },
     { "asm.syntax",         "intel" },
@@ -122,12 +123,14 @@ static const QHash<QString, QVariant> asmOptions = {
     { "asm.bb.line",        false },
     { "asm.capitalize",     false },
     { "asm.var.sub",        true },
-    { "asm.var.subonly",    true },
+    { "asm.sub.varonly",    true },
     { "asm.tabs",           8 },
     { "asm.tabs.off",       5 },
     { "asm.marks",          false },
     { "asm.refptr",         false },
     { "asm.flags.real",     true },
+    { "asm.reloff",         false },
+    { "asm.reloff.flags",   false },
     { "esil.breakoninvalid",true },
     { "graph.offset",       false}
 };
@@ -649,7 +652,7 @@ void Configuration::setConfig(const QString &key, const QVariant &value)
  */
 QStringList Configuration::getAvailableTranslations()
 {
-    const auto &trDirs = getTranslationsDirectories();
+    const auto &trDirs = Cutter::getTranslationsDirectories();
 
     QSet<QString> fileNamesSet;
     for (const auto &trDir : trDirs) {
@@ -664,7 +667,7 @@ QStringList Configuration::getAvailableTranslations()
         }
     }
 
-    QStringList fileNames = fileNamesSet.toList();
+    QStringList fileNames = fileNamesSet.values();
     std::sort(fileNames.begin(), fileNames.end());
     QStringList languages;
     QString currLanguageName;
@@ -699,21 +702,6 @@ bool Configuration::isFirstExecution()
         s.setValue("firstExecution", false);
         return true;
     }
-}
-
-QStringList Configuration::getTranslationsDirectories() const
-{
-    static const QString cutterTranslationPath = QCoreApplication::applicationDirPath() +
-                                                 QDir::separator()
-                                                 + QLatin1String("translations");
-
-    return {
-        cutterTranslationPath,
-        QLibraryInfo::location(QLibraryInfo::TranslationsPath),
-#ifdef Q_OS_MAC
-        QStringLiteral("%1/../Resources/translations").arg(QCoreApplication::applicationDirPath()),
-#endif // Q_OS_MAC
-    };
 }
 
 QString Configuration::getSelectedDecompiler()
@@ -756,6 +744,22 @@ void Configuration::setBitmapExportScaleFactor(double inputValueGraph)
     s.setValue("bitmapGraphExportScale", inputValueGraph);
 }
 
+void Configuration::setGraphSpacing(QPoint blockSpacing, QPoint edgeSpacing)
+{
+    s.setValue("graph.blockSpacing", blockSpacing);
+    s.setValue("graph.edgeSpacing", edgeSpacing);
+}
+
+QPoint Configuration::getGraphBlockSpacing()
+{
+    return s.value("graph.blockSpacing", QPoint(20, 40)).value<QPoint>();
+}
+
+QPoint Configuration::getGraphEdgeSpacing()
+{
+    return s.value("graph.edgeSpacing", QPoint(10, 10)).value<QPoint>();
+}
+
 void Configuration::setOutputRedirectionEnabled(bool enabled)
 {
     this->outputRedirectEnabled = enabled;
@@ -765,4 +769,3 @@ bool Configuration::getOutputRedirectionEnabled() const
 {
     return outputRedirectEnabled;
 }
-

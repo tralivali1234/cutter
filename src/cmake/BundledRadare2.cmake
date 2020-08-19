@@ -26,11 +26,11 @@ endif()
 
 ExternalProject_Add(Radare2-Bundled
         SOURCE_DIR "${RADARE2_SOURCE_DIR}"
-        CONFIGURE_COMMAND "${MESON}" "<SOURCE_DIR>" ${MESON_OPTIONS} && "${MESON}" configure ${MESON_OPTIONS}
+        CONFIGURE_COMMAND "${MESON}" "<SOURCE_DIR>" ${MESON_OPTIONS} && "${MESON}" configure ${MESON_OPTIONS} --buildtype "$<$<CONFIG:Debug>:debug>$<$<NOT:$<CONFIG:Debug>>:release>"
         BUILD_COMMAND "${NINJA}"
         INSTALL_COMMAND "${NINJA}" install)
 
-set(Radare2_INCLUDE_DIRS "${RADARE2_INSTALL_DIR}/include/libr")
+set(Radare2_INCLUDE_DIRS "${RADARE2_INSTALL_DIR}/include/libr" "${RADARE2_INSTALL_DIR}/include/libr/sdb")
 
 add_library(Radare2 INTERFACE)
 add_dependencies(Radare2 Radare2-Bundled)
@@ -50,7 +50,9 @@ set (R2_BIN r2agent rabin2 radare2 radiff2 rafind2 ragg2 rahash2 rarun2 rasm2 ra
 
 target_link_libraries(Radare2 INTERFACE
         ${R2_LIBS})
-target_include_directories(Radare2 INTERFACE $<BUILD_INTERFACE:${Radare2_INCLUDE_DIRS}> $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/libr>)
+target_include_directories(Radare2 INTERFACE
+    "$<BUILD_INTERFACE:${Radare2_INCLUDE_DIRS}>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/libr>")
 
 install(TARGETS Radare2 EXPORT CutterTargets)
 if (APPLE)

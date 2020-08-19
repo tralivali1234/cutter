@@ -1,5 +1,6 @@
 #include "common/Helpers.h"
 #include "ResourcesWidget.h"
+#include "ui_ListDockWidget.h"
 #include "core/MainWindow.h"
 #include <QVBoxLayout>
 
@@ -36,6 +37,23 @@ QVariant ResourcesModel::data(const QModelIndex &index, int role) const
             return res.type;
         case SIZE:
             return qhelpers::formatBytecount(res.size);
+        case LANG:
+            return res.lang;
+        default:
+            return QVariant();
+        }
+    case Qt::EditRole:
+        switch (index.column()) {
+        case NAME:
+            return res.name;
+        case VADDR:
+            return res.vaddr;
+        case INDEX:
+            return res.index;
+        case TYPE:
+            return res.type;
+        case SIZE:
+            return res.size;
         case LANG:
             return res.lang;
         default:
@@ -79,21 +97,24 @@ RVA ResourcesModel::address(const QModelIndex &index) const
     return res.vaddr;
 }
 
-ResourcesWidget::ResourcesWidget(MainWindow *main, QAction *action) :
-    ListDockWidget(main, action, ListDockWidget::SearchBarPolicy::HideByDefault)
+ResourcesWidget::ResourcesWidget(MainWindow *main) :
+    ListDockWidget(main, ListDockWidget::SearchBarPolicy::HideByDefault)
 {
     setObjectName("ResourcesWidget");
 
     model = new ResourcesModel(&resources, this);
     filterModel = new AddressableFilterProxyModel(model, this);
+    filterModel->setSortRole(Qt::EditRole);
     setModels(filterModel);
+
+    ui->treeView->sortByColumn(0, Qt::AscendingOrder);
 
     showCount(false);
 
     // Configure widget
     this->setWindowTitle(tr("Resources"));
 
-    connect(Core(), SIGNAL(refreshAll()), this, SLOT(refreshResources()));
+    connect(Core(), &CutterCore::refreshAll, this, &ResourcesWidget::refreshResources);
 }
 
 void ResourcesWidget::refreshResources()

@@ -41,11 +41,10 @@ class ResourcesWidget : public ListDockWidget
 private:
     ResourcesModel *model;
     AddressableFilterProxyModel *filterModel;
-    CutterTreeView *view;
     QList<ResourcesDescription> resources;
 
 public:
-    explicit ResourcesWidget(MainWindow *main, QAction *action = nullptr);
+    explicit ResourcesWidget(MainWindow *main);
 
 private slots:
     void refreshResources();

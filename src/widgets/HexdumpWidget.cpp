@@ -17,8 +17,8 @@
 #include <QInputDialog>
 #include <QShortcut>
 
-HexdumpWidget::HexdumpWidget(MainWindow *main, QAction *action) :
-    MemoryDockWidget(MemoryWidgetType::Hexdump, main, action),
+HexdumpWidget::HexdumpWidget(MainWindow *main) :
+    MemoryDockWidget(MemoryWidgetType::Hexdump, main),
     ui(new Ui::HexdumpWidget)
 {
     ui->setupUi(this);
@@ -86,6 +86,7 @@ HexdumpWidget::HexdumpWidget(MainWindow *main, QAction *action) :
 
     connect(Config(), &Configuration::fontsUpdated, this, &HexdumpWidget::fontsUpdated);
     connect(Core(), &CutterCore::refreshAll, this, [this]() { refresh(); });
+    connect(Core(), &CutterCore::refreshCodeViews, this, [this]() { refresh(); });
     connect(Core(), &CutterCore::instructionChanged, this, [this]() { refresh(); });
     connect(Core(), &CutterCore::stackChanged, this, [this]() { refresh(); });
     connect(Core(), &CutterCore::registersChanged, this, [this]() { refresh(); });
@@ -149,6 +150,19 @@ void HexdumpWidget::refresh(RVA addr)
 void HexdumpWidget::initParsing()
 {
     // Fill the plugins combo for the hexdump sidebar
+    ui->parseTypeComboBox->addItem(tr("Disassembly"), "pda");
+    ui->parseTypeComboBox->addItem(tr("String"), "pcs");
+    ui->parseTypeComboBox->addItem(tr("Assembler"), "pca");
+    ui->parseTypeComboBox->addItem(tr("C bytes"), "pc");
+    ui->parseTypeComboBox->addItem(tr("C bytes with instructions"), "pci");
+    ui->parseTypeComboBox->addItem(tr("C half-words (2 byte)"), "pch");
+    ui->parseTypeComboBox->addItem(tr("C words (4 byte)"), "pcw");
+    ui->parseTypeComboBox->addItem(tr("C dwords (8 byte)"), "pcd");
+    ui->parseTypeComboBox->addItem(tr("Python"), "pcp");
+    ui->parseTypeComboBox->addItem(tr("JSON"), "pcj");
+    ui->parseTypeComboBox->addItem(tr("JavaScript"), "pcJ");
+    ui->parseTypeComboBox->addItem(tr("Yara"), "pcy");
+
     ui->parseArchComboBox->insertItems(0, Core()->getAsmPluginNames());
 
     ui->parseEndianComboBox->setCurrentIndex(Core()->getConfigb("cfg.bigendian") ? 1 : 0);
@@ -226,7 +240,7 @@ void HexdumpWidget::updateParseWindow(RVA start_address, int size)
         // Get selected combos
         QString arch = ui->parseArchComboBox->currentText();
         QString bits = ui->parseBitsComboBox->currentText();
-        QString selectedCommand = "";
+        QString selectedCommand = ui->parseTypeComboBox->currentData().toString();
         QString commandResult = "";
         bool bigEndian = ui->parseEndianComboBox->currentIndex() == 1;
 
@@ -236,41 +250,6 @@ void HexdumpWidget::updateParseWindow(RVA start_address, int size)
         .set("asm.bits", bits)
         .set("cfg.bigendian", bigEndian);
 
-        switch (ui->parseTypeComboBox->currentIndex()) {
-        case 0: // Disassembly
-            selectedCommand = "pda";
-            break;
-        case 1: // String
-            selectedCommand = "pcs";
-            break;
-        case 2: // Assembler
-            selectedCommand = "pca";
-            break;
-        case 3: // C byte array
-            selectedCommand = "pc";
-            break;
-        case 4: // C half-word
-            selectedCommand = "pch";
-            break;
-        case 5: // C word
-            selectedCommand = "pcw";
-            break;
-        case 6: // C dword
-            selectedCommand = "pcd";
-            break;
-        case 7: // Python
-            selectedCommand = "pcp";
-            break;
-        case 8: // JSON
-            selectedCommand = "pcj";
-            break;
-        case 9: // JavaScript
-            selectedCommand = "pcJ";
-            break;
-        case 10: // Yara
-            selectedCommand = "pcy";
-            break;
-        }
         ui->hexDisasTextEdit->setPlainText(selectedCommand != "" ? Core()->cmdRawAt(QString("%1 %2")
                                                                     .arg(selectedCommand)
                                                                     .arg(size)
@@ -291,7 +270,8 @@ void HexdumpWidget::updateParseWindow(RVA start_address, int size)
 
 void HexdumpWidget::on_parseTypeComboBox_currentTextChanged(const QString &)
 {
-    if (ui->parseTypeComboBox->currentIndex() == 0) {
+    QString currentParseTypeText = ui->parseTypeComboBox->currentData().toString();
+    if (currentParseTypeText == "pda" || currentParseTypeText == "pci") {
         ui->hexSideFrame_2->show();
     } else {
         ui->hexSideFrame_2->hide();

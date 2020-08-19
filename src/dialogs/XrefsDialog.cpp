@@ -8,7 +8,7 @@
 
 #include <QJsonArray>
 
-XrefsDialog::XrefsDialog(MainWindow *main, QWidget *parent) :
+XrefsDialog::XrefsDialog(MainWindow *main, QWidget *parent, bool hideXrefFrom) :
     QDialog(parent),
     addr(0),
     toModel(this),
@@ -35,9 +35,9 @@ XrefsDialog::XrefsDialog(MainWindow *main, QWidget *parent) :
     setupPreviewFont();
 
     // Highlight current line
-    connect(ui->previewTextEdit, SIGNAL(cursorPositionChanged()), this, SLOT(highlightCurrentLine()));
-    connect(Config(), SIGNAL(fontsUpdated()), this, SLOT(setupPreviewFont()));
-    connect(Config(), SIGNAL(colorsUpdated()), this, SLOT(setupPreviewColors()));
+    connect(ui->previewTextEdit, &QPlainTextEdit::cursorPositionChanged, this, &XrefsDialog::highlightCurrentLine);
+    connect(Config(), &Configuration::fontsUpdated, this, &XrefsDialog::setupPreviewFont);
+    connect(Config(), &Configuration::colorsUpdated, this, &XrefsDialog::setupPreviewColors);
 
     connect(ui->toTreeWidget->selectionModel(), &QItemSelectionModel::selectionChanged,
             this, &XrefsDialog::onToTreeWidgetItemSelectionChanged);
@@ -52,6 +52,10 @@ XrefsDialog::XrefsDialog(MainWindow *main, QWidget *parent) :
 
     connect(ui->toTreeWidget, &QAbstractItemView::doubleClicked, this, &QWidget::close);
     connect(ui->fromTreeWidget, &QAbstractItemView::doubleClicked, this, &QWidget::close);
+
+    if (hideXrefFrom) {
+        hideXrefFromSection();
+    }
 }
 
 XrefsDialog::~XrefsDialog() { }
@@ -134,22 +138,52 @@ void XrefsDialog::updatePreview(RVA addr)
 
 void XrefsDialog::updateLabels(QString name)
 {
-    ui->label_xTo->setText(tr("X-Refs to %1:").arg(name));
-    ui->label_xFrom->setText(tr("X-Refs from %1:").arg(name));
+    ui->label_xTo->setText(tr("X-Refs to %1 (%2 results):").arg(name).arg(toModel.rowCount()));
+    ui->label_xFrom->setText(tr("X-Refs from %1 (%2 results):").arg(name).arg(fromModel.rowCount()));
+}
+
+void XrefsDialog::updateLabelsForVariables(QString name)
+{
+    ui->label_xTo->setText(tr("Writes to %1").arg(name));
+    ui->label_xFrom->setText(tr("Reads from %1").arg(name));
+}
+
+void XrefsDialog::hideXrefFromSection()
+{
+    ui->label_xFrom->hide();
+    ui->fromTreeWidget->hide();
 }
 
 void XrefsDialog::fillRefsForAddress(RVA addr, QString name, bool whole_function)
 {
-    TempConfig tempConfig;
-    tempConfig.set("scr.html", false);
-    tempConfig.set("scr.color", COLOR_MODE_DISABLED);
-
     setWindowTitle(tr("X-Refs for %1").arg(name));
-    updateLabels(name);
 
     toModel.readForOffset(addr, true, whole_function);
     fromModel.readForOffset(addr, false, whole_function);
 
+    updateLabels(name);
+
+    // Adjust columns to content
+    qhelpers::adjustColumns(ui->fromTreeWidget, fromModel.columnCount(), 0);
+    qhelpers::adjustColumns(ui->toTreeWidget, toModel.columnCount(), 0);
+
+    // Automatically select the first line
+    if (!qhelpers::selectFirstItem(ui->toTreeWidget)) {
+        qhelpers::selectFirstItem(ui->fromTreeWidget);
+    }
+}
+
+void XrefsDialog::fillRefsForVariable(QString nameOfVariable, RVA offset)
+{
+    setWindowTitle(tr("X-Refs for %1").arg(nameOfVariable));
+    updateLabelsForVariables(nameOfVariable);
+
+    // Initialize Model
+    toModel.readForVariable(nameOfVariable, true, offset);
+    fromModel.readForVariable(nameOfVariable, false, offset);
+    // Hide irrelevant column 1: which shows type
+    ui->fromTreeWidget->hideColumn(XrefModel::Columns::TYPE);
+    ui->toTreeWidget->hideColumn(XrefModel::Columns::TYPE);
     // Adjust columns to content
     qhelpers::adjustColumns(ui->fromTreeWidget, fromModel.columnCount(), 0);
     qhelpers::adjustColumns(ui->toTreeWidget, toModel.columnCount(), 0);
@@ -185,6 +219,14 @@ void XrefModel::readForOffset(RVA offset, bool to, bool whole_function)
     beginResetModel();
     this->to = to;
     xrefs = Core()->getXRefs(offset, to, whole_function);
+    endResetModel();
+}
+
+void XrefModel::readForVariable(QString nameOfVariable, bool write, RVA offset)
+{
+    beginResetModel();
+    this->to = write;
+    xrefs = Core()->getXRefsForVariable(nameOfVariable, write, offset);
     endResetModel();
 }
 
@@ -226,7 +268,7 @@ QVariant XrefModel::data(const QModelIndex &index, int role) const
     case FlagDescriptionRole:
         return QVariant::fromValue(xref);
     default:
-        return QVariant();
+        break;
     }
     return QVariant();
 }

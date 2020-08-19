@@ -3,7 +3,6 @@
 
 #include "core/MainWindow.h"
 #include "common/Helpers.h"
-#include "dialogs/RenameDialog.h"
 #include "common/FunctionsTask.h"
 #include "common/TempConfig.h"
 #include "menus/AddressableItemContextMenu.h"
@@ -16,6 +15,7 @@
 #include <QShortcut>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QInputDialog>
 
 namespace {
 
@@ -37,9 +37,9 @@ FunctionModel::FunctionModel(QList<FunctionDescription> *functions, QSet<RVA> *i
       currentIndex(-1)
 
 {
-    connect(Core(), SIGNAL(seekChanged(RVA)), this, SLOT(seekChanged(RVA)));
-    connect(Core(), SIGNAL(functionRenamed(const QString &, const QString &)), this,
-            SLOT(functionRenamed(QString, QString)));
+    connect(Core(), &CutterCore::seekChanged, this, &FunctionModel::seekChanged);
+    connect(Core(), &CutterCore::functionRenamed,
+            this, &FunctionModel::functionRenamed);
 }
 
 QModelIndex FunctionModel::index(int row, int column, const QModelIndex &parent) const
@@ -334,11 +334,11 @@ bool FunctionModel::updateCurrentIndex()
     return changed;
 }
 
-void FunctionModel::functionRenamed(const QString &prev_name, const QString &new_name)
+void FunctionModel::functionRenamed(const RVA offset, const QString &new_name)
 {
     for (int i = 0; i < functions->count(); i++) {
         FunctionDescription &function = (*functions)[i];
-        if (function.name == prev_name) {
+        if (function.offset == offset) {
             function.name = new_name;
             emit dataChanged(index(i, 0), index(i, columnCount() - 1));
         }
@@ -424,8 +424,8 @@ bool FunctionSortFilterProxyModel::lessThan(const QModelIndex &left, const QMode
     }
 }
 
-FunctionsWidget::FunctionsWidget(MainWindow *main, QAction *action) :
-    ListDockWidget(main, action),
+FunctionsWidget::FunctionsWidget(MainWindow *main) :
+    ListDockWidget(main),
     actionRename(tr("Rename"), this),
     actionUndefine(tr("Undefine"), this),
     actionHorizontal(tr("Horizontal"), this),
@@ -435,7 +435,7 @@ FunctionsWidget::FunctionsWidget(MainWindow *main, QAction *action) :
     setObjectName("FunctionsWidget");
 
     setTooltipStylesheet();
-    connect(Config(), SIGNAL(colorsUpdated()), this, SLOT(setTooltipStylesheet()));
+    connect(Config(), &Configuration::colorsUpdated, this, &FunctionsWidget::setTooltipStylesheet);
 
     QFontInfo font_info = ui->treeView->fontInfo();
     QFont default_font = QFont(font_info.family(), font_info.pointSize());
@@ -476,8 +476,8 @@ FunctionsWidget::FunctionsWidget(MainWindow *main, QAction *action) :
     // Use a custom context menu on the dock title bar
     actionHorizontal.setChecked(true);
     this->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(this, SIGNAL(customContextMenuRequested(const QPoint &)),
-            this, SLOT(showTitleContextMenu(const QPoint &)));
+    connect(this, &QWidget::customContextMenuRequested,
+            this, &FunctionsWidget::showTitleContextMenu);
 
     connect(Core(), &CutterCore::functionsChanged, this, &FunctionsWidget::refreshTree);
     connect(Core(), &CutterCore::codeRebased, this, &FunctionsWidget::refreshTree);
@@ -526,18 +526,14 @@ void FunctionsWidget::onActionFunctionsRenameTriggered()
     FunctionDescription function = ui->treeView->selectionModel()->currentIndex().data(
                                        FunctionModel::FunctionDescriptionRole).value<FunctionDescription>();
 
+    bool ok;
     // Create dialog
-    RenameDialog r(this);
-
-    // Set function name in dialog
-    r.setName(function.name);
+    QString newName = QInputDialog::getText(this, tr("Rename function %1").arg(function.name),
+                            tr("Function name:"), QLineEdit::Normal, function.name, &ok);
     // If user accepted
-    if (r.exec()) {
-        // Get new function name
-        QString new_name = r.getName();
-
+    if (ok && !newName.isEmpty()) {
         // Rename function in r2 core
-        Core()->renameFunction(function.name, new_name);
+        Core()->renameFunction(function.offset, newName);
 
         // Seek to new renamed function
         Core()->seekAndShow(function.offset);

@@ -1,7 +1,6 @@
 #include "FlagsWidget.h"
 #include "ui_FlagsWidget.h"
 #include "core/MainWindow.h"
-#include "dialogs/RenameDialog.h"
 #include "common/Helpers.h"
 
 #include <QComboBox>
@@ -9,6 +8,7 @@
 #include <QShortcut>
 #include <QTreeWidget>
 #include <QStandardItemModel>
+#include <QInputDialog>
 
 FlagsModel::FlagsModel(QList<FlagDescription> *flags, QObject *parent)
     : AddressableItemModel<QAbstractListModel>(parent),
@@ -137,8 +137,8 @@ bool FlagsSortFilterProxyModel::lessThan(const QModelIndex &left, const QModelIn
 }
 
 
-FlagsWidget::FlagsWidget(MainWindow *main, QAction *action) :
-    CutterDockWidget(main, action),
+FlagsWidget::FlagsWidget(MainWindow *main) :
+    CutterDockWidget(main),
     ui(new Ui::FlagsWidget),
     main(main),
     tree(new CutterTreeWidget(this))
@@ -150,15 +150,15 @@ FlagsWidget::FlagsWidget(MainWindow *main, QAction *action) :
 
     flags_model = new FlagsModel(&flags, this);
     flags_proxy_model = new FlagsSortFilterProxyModel(flags_model, this);
-    connect(ui->filterLineEdit, SIGNAL(textChanged(const QString &)), flags_proxy_model,
-            SLOT(setFilterWildcard(const QString &)));
+    connect(ui->filterLineEdit, &QLineEdit::textChanged,
+            flags_proxy_model, &QSortFilterProxyModel::setFilterWildcard);
     ui->flagsTreeView->setMainWindow(mainWindow);
     ui->flagsTreeView->setModel(flags_proxy_model);
     ui->flagsTreeView->sortByColumn(FlagsModel::OFFSET, Qt::AscendingOrder);
 
     // Ctrl-F to move the focus to the Filter search box
     QShortcut *searchShortcut = new QShortcut(QKeySequence::Find, this);
-    connect(searchShortcut, SIGNAL(activated()), ui->filterLineEdit, SLOT(setFocus()));
+    connect(searchShortcut, &QShortcut::activated, ui->filterLineEdit, [this]() { ui->filterLineEdit->setFocus(); });
     searchShortcut->setContext(Qt::WidgetWithChildrenShortcut);
 
     // Esc to clear the filter entry
@@ -204,11 +204,11 @@ void FlagsWidget::on_actionRename_triggered()
     FlagDescription flag = ui->flagsTreeView->selectionModel()->currentIndex().data(
                                FlagsModel::FlagDescriptionRole).value<FlagDescription>();
 
-    RenameDialog r(this);
-    r.setName(flag.name);
-    if (r.exec()) {
-        QString new_name = r.getName();
-        Core()->renameFlag(flag.name, new_name);
+    bool ok;
+    QString newName = QInputDialog::getText(this, tr("Rename flag %1").arg(flag.name),
+                            tr("Flag name:"), QLineEdit::Normal, flag.name, &ok);
+    if (ok && !newName.isEmpty()) {
+        Core()->renameFlag(flag.name, newName);
     }
 }
 

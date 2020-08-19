@@ -28,6 +28,7 @@ Q_GLOBAL_STATIC(CutterCore, uniqueInstance)
 
 namespace RJsonKey {
     R_JSON_KEY(addr);
+    R_JSON_KEY(addrs);
     R_JSON_KEY(addr_end);
     R_JSON_KEY(arrow);
     R_JSON_KEY(baddr);
@@ -240,32 +241,47 @@ RCoreLocked CutterCore::core()
     return RCoreLocked(this);
 }
 
-QVector<QDir> CutterCore::getCutterRCDirectories() const
+QDir CutterCore::getCutterRCDefaultDirectory() const
 {
-    QVector<QDir> result;
-    result.push_back(QDir::home());
+    return QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+}
+
+QVector<QString> CutterCore::getCutterRCFilePaths() const
+{
+    QVector<QString> result;
+    result.push_back(QFileInfo(QDir::home(), ".cutterrc").absoluteFilePath());
     QStringList locations = QStandardPaths::standardLocations(QStandardPaths::AppConfigLocation);
     for (auto &location : locations) { 
-        result.push_back(QDir(location)); 
+        result.push_back(QFileInfo(QDir(location), ".cutterrc").absoluteFilePath());
     }
+    result.push_back(QFileInfo(getCutterRCDefaultDirectory(), "rc").absoluteFilePath()); // File in config editor is from this path
     return result;
 }
 
 void CutterCore::loadCutterRC()
 {
     CORE_LOCK();
-    
-    const auto result = getCutterRCDirectories();
-    for(auto &dir : result){
-        if(!dir.exists())continue;
-        auto cutterRCFileInfo = QFileInfo(dir, ".cutterrc");
-        auto path = cutterRCFileInfo.absoluteFilePath();
-        if (!cutterRCFileInfo.isFile()) {
+    const auto result = getCutterRCFilePaths();
+    for(auto &cutterRCFilePath : result){
+        auto cutterRCFileInfo = QFileInfo(cutterRCFilePath);
+        if (!cutterRCFileInfo.exists() || !cutterRCFileInfo.isFile()) {
             continue;
         }
-        qInfo() << "Loading initialization file from" << path;
-        r_core_cmd_file(core, path.toUtf8().constData());
+        qInfo() << "Loading initialization file from " << cutterRCFilePath;
+        r_core_cmd_file(core, cutterRCFilePath.toUtf8().constData());
     }
+}
+
+void CutterCore::loadDefaultCutterRC()
+{
+    CORE_LOCK();
+    auto cutterRCFilePath = QFileInfo(getCutterRCDefaultDirectory(), "rc").absoluteFilePath();
+    const auto cutterRCFileInfo = QFileInfo(cutterRCFilePath);
+    if (!cutterRCFileInfo.exists() || !cutterRCFileInfo.isFile()) {
+        return;
+    }
+    qInfo() << "Loading initialization file from " << cutterRCFilePath;
+    r_core_cmd_file(core, cutterRCFilePath.toUtf8().constData());
 }
 
 
@@ -461,6 +477,18 @@ QJsonDocument CutterCore::cmdj(const char *str)
     return doc;
 }
 
+QJsonDocument CutterCore::cmdjAt(const char *str, RVA address)
+{
+    QJsonDocument res;
+    RVA oldOffset = getOffset();
+    seekSilent(address);
+
+    res = cmdj(str);
+
+    seekSilent(oldOffset);
+    return res;
+}
+
 QString CutterCore::cmdTask(const QString &str)
 {
     R2Task task(str);
@@ -591,9 +619,6 @@ bool CutterCore::loadFile(QString path, ut64 baddr, ut64 mapaddr, int perms, int
         r_core_cmd0 (core, "omfg+w");
     }
 
-    ut64 hashLimit = getConfigut64("cfg.hashlimit");
-    r_bin_file_compute_hashes(core->bin, hashLimit);
-
     fflush(stdout);
     return true;
 }
@@ -633,10 +658,10 @@ bool CutterCore::mapFile(QString path, RVA mapaddr)
     return true;
 }
 
-void CutterCore::renameFunction(const QString &oldName, const QString &newName)
+void CutterCore::renameFunction(const RVA offset, const QString &newName)
 {
-    cmdRaw("afn " + newName + " " + oldName);
-    emit functionRenamed(oldName, newName);
+    cmdRaw("afn " + newName + " " + RAddressString(offset));
+    emit functionRenamed(offset, newName);
 }
 
 void CutterCore::delFunction(RVA addr)
@@ -649,6 +674,17 @@ void CutterCore::renameFlag(QString old_name, QString new_name)
 {
     cmdRaw("fr " + old_name + " " + new_name);
     emit flagsChanged();
+}
+
+void CutterCore::renameFunctionVariable(QString newName, QString oldName, RVA functionAddress)
+{
+    CORE_LOCK();
+    RAnalFunction *function = r_anal_get_function_at(core->anal, functionAddress);
+    RAnalVar *variable = r_anal_function_get_var_byname(function, oldName.toUtf8().constData());
+    if (variable) {
+        r_anal_var_rename(variable, newName.toUtf8().constData(), true);
+    }
+    emit refreshCodeViews();
 }
 
 void CutterCore::delFlag(RVA addr)
@@ -793,7 +829,7 @@ void CutterCore::delComment(RVA addr)
 QString CutterCore::getCommentAt(RVA addr)
 {
     CORE_LOCK();
-    return fromOwnedCharPtr(r_meta_get_string(core->anal, R_META_TYPE_COMMENT, addr));
+    return r_meta_get_string(core->anal, R_META_TYPE_COMMENT, addr);
 }
 
 void CutterCore::setImmediateBase(const QString &r2BaseName, RVA offset)
@@ -944,6 +980,18 @@ QString CutterCore::itoa(ut64 num, int rdx)
     return QString::number(num, rdx);
 }
 
+void CutterCore::setConfig(const char *k, const char *v)
+{
+    CORE_LOCK();
+    r_config_set(core->config, k, v);
+}
+
+void CutterCore::setConfig(const QString &k, const char *v)
+{
+    CORE_LOCK();
+    r_config_set(core->config, k.toUtf8().constData(), v);
+}
+
 void CutterCore::setConfig(const char *k, const QString &v)
 {
     CORE_LOCK();
@@ -984,7 +1032,7 @@ QString CutterCore::getConfigDescription(const char *k)
 {
     CORE_LOCK();
     RConfigNode *node = r_config_node_get (core->config, k);
-    return QString(node->desc);
+    return node ? QString(node->desc) : QString("Unrecognized configuration key");
 }
 
 void CutterCore::triggerRefreshAll()
@@ -1054,7 +1102,7 @@ void CutterCore::setEndianness(bool big)
 QByteArray CutterCore::assemble(const QString &code)
 {
     CORE_LOCK();
-    RAsmCode *ac = r_asm_massemble(core->assembler, code.toUtf8().constData());
+    RAsmCode *ac = r_asm_massemble(core->rasm, code.toUtf8().constData());
     QByteArray res;
     if (ac && ac->bytes) {
         res = QByteArray(reinterpret_cast<const char *>(ac->bytes), ac->len);
@@ -1066,7 +1114,7 @@ QByteArray CutterCore::assemble(const QString &code)
 QString CutterCore::disassemble(const QByteArray &data)
 {
     CORE_LOCK();
-    RAsmCode *ac = r_asm_mdisassemble(core->assembler, reinterpret_cast<const ut8 *>(data.constData()), data.length());
+    RAsmCode *ac = r_asm_mdisassemble(core->rasm, reinterpret_cast<const ut8 *>(data.constData()), data.length());
     QString code;
     if (ac && ac->assembly) {
         code = QString::fromUtf8(ac->assembly);
@@ -1345,7 +1393,7 @@ QJsonObject CutterCore::getAddrRefs(RVA addr, int depth) {
     }
 
     CORE_LOCK();
-    int bits = core->assembler->bits;
+    int bits = core->rasm->bits;
     QByteArray buf = QByteArray();
     ut64 type = r_core_anal_address(core, addr);
 
@@ -1409,8 +1457,8 @@ QJsonObject CutterCore::getAddrRefs(RVA addr, int depth) {
             perms += "x";
             // Instruction disassembly
             r_io_read_at(core->io, addr, (unsigned char*)buf.data(), buf.size());
-            r_asm_set_pc(core->assembler, addr);
-            r_asm_disassemble(core->assembler, &op, (unsigned char*)buf.data(), buf.size());
+            r_asm_set_pc(core->rasm, addr);
+            r_asm_disassemble(core->rasm, &op, (unsigned char*)buf.data(), buf.size());
             json["asm"] = r_asm_op_get_asm(&op);
         }
 
@@ -2031,23 +2079,7 @@ void CutterCore::setDebugPlugin(QString plugin)
 void CutterCore::toggleBreakpoint(RVA addr)
 {
     cmdRaw(QString("dbs %1").arg(addr));
-    emit instructionChanged(addr);
-    emit breakpointsChanged();
-}
-
-void CutterCore::toggleBreakpoint(QString addr)
-{
-    cmdRaw("dbs " + addr);
-    emit instructionChanged(addr.toULongLong());
-    emit breakpointsChanged();
-}
-
-
-void CutterCore::addBreakpoint(QString addr)
-{
-    cmdRaw("db " + addr);
-    emit instructionChanged(addr.toULongLong());
-    emit breakpointsChanged();
+    emit breakpointsChanged(addr);
 }
 
 void CutterCore::addBreakpoint(const BreakpointDescription &config)
@@ -2101,8 +2133,7 @@ void CutterCore::addBreakpoint(const BreakpointDescription &config)
     if (!config.command.isEmpty()) {
         updateOwnedCharPtr(breakpoint->data, config.command);
     }
-    emit instructionChanged(breakpoint->addr);
-    emit breakpointsChanged();
+    emit breakpointsChanged(breakpoint->addr);
 }
 
 void CutterCore::updateBreakpoint(int index, const BreakpointDescription &config)
@@ -2120,8 +2151,7 @@ void CutterCore::updateBreakpoint(int index, const BreakpointDescription &config
 void CutterCore::delBreakpoint(RVA addr)
 {
     cmdRaw("db- " + RAddressString(addr));
-    emit instructionChanged(addr);
-    emit breakpointsChanged();
+    emit breakpointsChanged(addr);
 }
 
 void CutterCore::delAllBreakpoints()
@@ -2133,15 +2163,13 @@ void CutterCore::delAllBreakpoints()
 void CutterCore::enableBreakpoint(RVA addr)
 {
     cmdRaw("dbe " + RAddressString(addr));
-    emit instructionChanged(addr);
-    emit breakpointsChanged();
+    emit breakpointsChanged(addr);
 }
 
 void CutterCore::disableBreakpoint(RVA addr)
 {
     cmdRaw("dbd " + RAddressString(addr));
-    emit instructionChanged(addr);
-    emit breakpointsChanged();
+    emit breakpointsChanged(addr);
 }
 
 void CutterCore::setBreakpointTrace(int index, bool enabled)
@@ -2365,7 +2393,7 @@ QStringList CutterCore::getAsmPluginNames()
     QStringList ret;
 
     RAsmPlugin *ap;
-    CutterRListForeach(core->assembler->plugins, it, RAsmPlugin, ap) {
+    CutterRListForeach(core->rasm->plugins, it, RAsmPlugin, ap) {
         ret << ap->name;
     }
 
@@ -2476,7 +2504,7 @@ QList<RAsmPluginDescription> CutterCore::getRAsmPluginDescriptions()
     QList<RAsmPluginDescription> ret;
 
     RAsmPlugin *ap;
-    CutterRListForeach(core->assembler->plugins, it, RAsmPlugin, ap) {
+    CutterRListForeach(core->rasm->plugins, it, RAsmPlugin, ap) {
         RAsmPluginDescription plugin;
 
         plugin.name = ap->name;
@@ -3385,7 +3413,15 @@ BlockStatistics CutterCore::getBlockStatistics(unsigned int blocksCount)
         return blockStats;
     }
 
-    QJsonObject statsObj = cmdj("p-j " + QString::number(blocksCount)).object();
+    QJsonObject statsObj;
+
+    // User TempConfig here to set the search boundaries to all sections. This makes sure
+    // that the Visual Navbar will show all the relevant addresses.
+    {
+        TempConfig tempConfig;
+        tempConfig.set("search.in", "bin.sections");
+        statsObj = cmdj("p-j " + QString::number(blocksCount)).object();
+    }
 
     blockStats.from = statsObj[RJsonKey::from].toVariant().toULongLong();
     blockStats.to = statsObj[RJsonKey::to].toVariant().toULongLong();
@@ -3425,6 +3461,37 @@ BlockStatistics CutterCore::getBlockStatistics(unsigned int blocksCount)
     }
 
     return blockStats;
+}
+
+QList<XrefDescription> CutterCore::getXRefsForVariable(QString variableName, bool findWrites, RVA offset)
+{
+    QList<XrefDescription> xrefList = QList<XrefDescription>();
+    QJsonArray xrefsArray;
+    if (findWrites) {
+        xrefsArray = cmdjAt("afvWj", offset).array();
+    } else {
+        xrefsArray = cmdjAt("afvRj", offset).array();
+    }
+    for (const QJsonValue &value : xrefsArray) {
+        QJsonObject xrefObject = value.toObject();
+        QString name = xrefObject[RJsonKey::name].toString();
+        if (name == variableName) {
+            QJsonArray addressArray = xrefObject[RJsonKey::addrs].toArray();
+            for (const QJsonValue &address : addressArray) {
+                XrefDescription xref;
+                RVA addr = address.toVariant().toULongLong();
+                xref.from = addr;
+                xref.to = addr;
+                if (findWrites) {
+                    xref.from_str = RAddressString(addr);
+                } else {
+                    xref.to_str = RAddressString(addr);
+                }
+                xrefList << xref;
+            }
+        }
+    }
+    return xrefList;
 }
 
 QList<XrefDescription> CutterCore::getXRefs(RVA addr, bool to, bool whole_function,
@@ -3564,9 +3631,9 @@ void CutterCore::triggerVarsChanged()
     emit varsChanged();
 }
 
-void CutterCore::triggerFunctionRenamed(const QString &prevName, const QString &newName)
+void CutterCore::triggerFunctionRenamed(const RVA offset, const QString &newName)
 {
-    emit functionRenamed(prevName, newName);
+    emit functionRenamed(offset, newName);
 }
 
 void CutterCore::loadPDB(const QString &file)
@@ -3771,9 +3838,15 @@ BasicInstructionHighlighter* CutterCore::getBIHighlighter()
 
 void CutterCore::setIOCache(bool enabled)
 {
+    if (enabled) {
+        // disable write mode when cache is enabled
+        setWriteMode(false);
+    }
     setConfig("io.cache", enabled);
     this->iocache = enabled;
+
     emit ioCacheChanged(enabled);
+    emit ioModeChanged();
 }
 
 bool CutterCore::isIOCacheEnabled() const
@@ -3783,8 +3856,11 @@ bool CutterCore::isIOCacheEnabled() const
 
 void CutterCore::commitWriteCache()
 {
+    // Temporarily disable cache mode
+    TempConfig tempConfig;
+    tempConfig.set("io.cache", false);
     if (!isWriteModeEnabled()) {
-        setWriteMode (true);
+        cmdRaw("oo+");
         cmdRaw("wci");
         cmdRaw("oo");
     } else {
@@ -3797,8 +3873,8 @@ void CutterCore::setWriteMode(bool enabled)
 {
     bool writeModeState = isWriteModeEnabled();
 
-    if (writeModeState == enabled) {
-        // New mode is the same as current. Do nothing.
+    if (writeModeState == enabled && !this->iocache) {
+        // New mode is the same as current and IO Cache is disabled. Do nothing.
         return;
     }
     
@@ -3809,7 +3885,11 @@ void CutterCore::setWriteMode(bool enabled)
     } else {
         cmdRaw("oo");
     }
+    // Disable cache mode because we specifically set write or
+    // read-only modes.
+    setIOCache(false);
     writeModeChanged (enabled);
+    emit ioModeChanged();
 }
 
 bool CutterCore::isWriteModeEnabled()

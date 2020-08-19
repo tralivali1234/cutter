@@ -14,6 +14,7 @@
 #include "ui_ConsoleWidget.h"
 #include "common/Helpers.h"
 #include "common/SvgIconEngine.h"
+#include "WidgetShortcuts.h"
 
 #ifdef Q_OS_WIN
 #include <io.h>
@@ -37,8 +38,8 @@ static const int invalidHistoryPos = -1;
 
 static const char *consoleWrapSettingsKey = "console.wrap";
 
-ConsoleWidget::ConsoleWidget(MainWindow *main, QAction *action) :
-    CutterDockWidget(main, action),
+ConsoleWidget::ConsoleWidget(MainWindow *main) :
+    CutterDockWidget(main),
     ui(new Ui::ConsoleWidget),
     debugOutputEnabled(true),
     maxHistoryEntries(100),
@@ -59,8 +60,24 @@ ConsoleWidget::ConsoleWidget(MainWindow *main, QAction *action) :
     QTextDocument *console_docu = ui->outputTextEdit->document();
     console_docu->setDocumentMargin(10);
 
-    QAction *actionClear = new QAction(tr("Clear Output"), ui->outputTextEdit);
-    connect(actionClear, SIGNAL(triggered(bool)), ui->outputTextEdit, SLOT(clear()));
+    // Ctrl+` and ';' to toggle console widget
+    QAction *toggleConsole = toggleViewAction();
+    QList<QKeySequence> toggleShortcuts;
+    toggleShortcuts << widgetShortcuts["ConsoleWidget"] << widgetShortcuts["ConsoleWidgetAlternative"];
+    toggleConsole->setShortcuts(toggleShortcuts);
+    connect(toggleConsole, &QAction::triggered, this, [this, toggleConsole](){
+        if (toggleConsole->isChecked()) {
+            widgetToFocusOnRaise()->setFocus();
+        }
+    });
+
+    QAction *actionClear = new QAction(tr("Clear Output"), this);
+    connect(actionClear, &QAction::triggered, ui->outputTextEdit, &QPlainTextEdit::clear);
+    addAction(actionClear);
+
+    // Ctrl+l to clear the output
+    actionClear->setShortcut(Qt::CTRL + Qt::Key_L);
+    actionClear->setShortcutContext(Qt::WidgetWithChildrenShortcut);
     actions.append(actionClear);
 
     actionWrapLines = new QAction(tr("Wrap Lines"), ui->outputTextEdit);
@@ -84,25 +101,25 @@ ConsoleWidget::ConsoleWidget(MainWindow *main, QAction *action) :
 
     // Set console output context menu
     ui->outputTextEdit->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(ui->outputTextEdit, SIGNAL(customContextMenuRequested(const QPoint &)),
-            this, SLOT(showCustomContextMenu(const QPoint &)));
+    connect(ui->outputTextEdit, &QWidget::customContextMenuRequested,
+            this, &ConsoleWidget::showCustomContextMenu);
 
     // Esc clears r2InputLineEdit and debugeeInputLineEdit (like OmniBar)
     QShortcut *r2_clear_shortcut = new QShortcut(QKeySequence(Qt::Key_Escape), ui->r2InputLineEdit);
-    connect(r2_clear_shortcut, SIGNAL(activated()), this, SLOT(clear()));
+    connect(r2_clear_shortcut, &QShortcut::activated, this, &ConsoleWidget::clear);
     r2_clear_shortcut->setContext(Qt::WidgetShortcut);
 
     QShortcut *debugee_clear_shortcut = new QShortcut(QKeySequence(Qt::Key_Escape), ui->debugeeInputLineEdit);
-    connect(debugee_clear_shortcut, SIGNAL(activated()), this, SLOT(clear()));
+    connect(debugee_clear_shortcut, &QShortcut::activated, this, &ConsoleWidget::clear);
     debugee_clear_shortcut->setContext(Qt::WidgetShortcut);
 
     // Up and down arrows show history
     historyUpShortcut = new QShortcut(QKeySequence(Qt::Key_Up), ui->r2InputLineEdit);
-    connect(historyUpShortcut, SIGNAL(activated()), this, SLOT(historyPrev()));
+    connect(historyUpShortcut, &QShortcut::activated, this, &ConsoleWidget::historyPrev);
     historyUpShortcut->setContext(Qt::WidgetShortcut);
 
     historyDownShortcut = new QShortcut(QKeySequence(Qt::Key_Down), ui->r2InputLineEdit);
-    connect(historyDownShortcut, SIGNAL(activated()), this, SLOT(historyNext()));
+    connect(historyDownShortcut, &QShortcut::activated, this, &ConsoleWidget::historyNext);
     historyDownShortcut->setContext(Qt::WidgetShortcut);
 
     QShortcut *completionShortcut = new QShortcut(QKeySequence(Qt::Key_Tab), ui->r2InputLineEdit);
@@ -155,6 +172,11 @@ bool ConsoleWidget::eventFilter(QObject *obj, QEvent *event)
         }
     }
     return false;
+}
+
+QWidget *ConsoleWidget::widgetToFocusOnRaise()
+{
+    return ui->r2InputLineEdit;
 }
 
 void ConsoleWidget::setupFont()
@@ -459,5 +481,5 @@ void ConsoleWidget::redirectOutput()
     pipeSocket->connectToServer(QIODevice::ReadOnly);
 #endif
 
-    connect(pipeSocket, SIGNAL(readyRead()), this, SLOT(processQueuedOutput()));
+    connect(pipeSocket, &QIODevice::readyRead, this, &ConsoleWidget::processQueuedOutput);
 }

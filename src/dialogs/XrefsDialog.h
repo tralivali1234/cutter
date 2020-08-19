@@ -19,7 +19,7 @@ public:
 
     XrefModel(QObject *parent = nullptr);
     void readForOffset(RVA offset, bool to, bool whole_function);
-
+    void readForVariable(QString nameOfVariable, bool write, RVA offset);
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;
     int columnCount(const QModelIndex &parent = QModelIndex()) const override;
 
@@ -44,10 +44,17 @@ class XrefsDialog : public QDialog
     Q_OBJECT
 
 public:
-    explicit XrefsDialog(MainWindow *main, QWidget *parent);
+    explicit XrefsDialog(MainWindow *main, QWidget *parent, bool hideXrefFrom=false);
     ~XrefsDialog();
 
     void fillRefsForAddress(RVA addr, QString name, bool whole_function);
+    /**
+     * @brief Initializes toModel and fromModel with the details about the references to the specified
+     * local variable 'nameOfVariable'.
+     * @param nameOfVarible Name of the local variable for which the references are being initialized.
+     * @param offset An offset in the function in which the specified local variable exist.
+     */
+    void fillRefsForVariable(QString nameOfVariable, RVA offset);
 
 private slots:
     QString normalizeAddr(const QString &addr) const;
@@ -69,7 +76,9 @@ private:
     std::unique_ptr<Ui::XrefsDialog> ui;
 
     void updateLabels(QString name);
+    void updateLabelsForVariables(QString name);
     void updatePreview(RVA addr);
+    void hideXrefFromSection();
 };
 
 #endif // XREFSDIALOG_H

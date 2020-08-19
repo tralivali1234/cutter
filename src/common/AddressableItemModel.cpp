@@ -1,4 +1,7 @@
+#include <stdexcept>
 #include "AddressableItemModel.h"
+
+#include <stdexcept>
 
 AddressableFilterProxyModel::AddressableFilterProxyModel(AddressableItemModelI *sourceModel,
                                                          QObject *parent) :

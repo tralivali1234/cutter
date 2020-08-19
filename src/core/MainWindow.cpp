@@ -2,15 +2,16 @@
 #include "ui_MainWindow.h"
 
 // Common Headers
+#include "common/AnalTask.h"
 #include "common/BugReporting.h"
 #include "common/Highlighter.h"
-#include "common/HexAsciiHighlighter.h"
 #include "common/Helpers.h"
 #include "common/SvgIconEngine.h"
 #include "common/ProgressIndicator.h"
 #include "common/TempConfig.h"
 #include "common/RunScriptTask.h"
 #include "common/PythonManager.h"
+#include "plugins/CutterPlugin.h"
 #include "plugins/PluginManager.h"
 #include "CutterConfig.h"
 #include "CutterApplication.h"
@@ -22,10 +23,10 @@
 #include "dialogs/SaveProjectDialog.h"
 #include "dialogs/CommentsDialog.h"
 #include "dialogs/AboutDialog.h"
-#include "dialogs/RenameDialog.h"
 #include "dialogs/preferences/PreferencesDialog.h"
 #include "dialogs/MapFileDialog.h"
 #include "dialogs/AsyncTaskDialog.h"
+#include "dialogs/LayoutManager.h"
 
 // Widgets Headers
 #include "widgets/DisassemblerGraphView.h"
@@ -69,6 +70,8 @@
 #include "widgets/HexdumpWidget.h"
 #include "widgets/DecompilerWidget.h"
 #include "widgets/HexWidget.h"
+#include "widgets/R2GraphWidget.h"
+#include "widgets/CallGraph.h"
 
 // Qt Headers
 #include <QApplication>
@@ -91,6 +94,7 @@
 #include <QSysInfo>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QInputDialog>
 
 #include <QScrollBar>
 #include <QSettings>
@@ -111,7 +115,9 @@
 #include <QGraphicsView>
 
 template<class T>
-T* getNewInstance(MainWindow *m, QAction *a) { return new T(m, a); }
+T *getNewInstance(MainWindow *m) { return new T(m); }
+
+using namespace Cutter;
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -147,7 +153,8 @@ void MainWindow::initUI()
     connect(Core(), &CutterCore::ioCacheChanged, ui->actionCommitChanges, &QAction::setEnabled);
 
     widgetTypeToConstructorMap.insert(GraphWidget::getWidgetType(), getNewInstance<GraphWidget>);
-    widgetTypeToConstructorMap.insert(DisassemblyWidget::getWidgetType(), getNewInstance<DisassemblyWidget>);
+    widgetTypeToConstructorMap.insert(DisassemblyWidget::getWidgetType(),
+                                      getNewInstance<DisassemblyWidget>);
     widgetTypeToConstructorMap.insert(HexdumpWidget::getWidgetType(), getNewInstance<HexdumpWidget>);
 
     initToolBar();
@@ -160,34 +167,33 @@ void MainWindow::initUI()
 
     // Period goes to command entry
     QShortcut *cmd_shortcut = new QShortcut(QKeySequence(Qt::Key_Period), this);
-    connect(cmd_shortcut, SIGNAL(activated()), consoleDock, SLOT(focusInputLineEdit()));
+    connect(cmd_shortcut, &QShortcut::activated, consoleDock, &ConsoleWidget::focusInputLineEdit);
 
     // G and S goes to goto entry
     QShortcut *goto_shortcut = new QShortcut(QKeySequence(Qt::Key_G), this);
-    connect(goto_shortcut, SIGNAL(activated()), this->omnibar, SLOT(setFocus()));
+    connect(goto_shortcut, &QShortcut::activated, this->omnibar, [this](){ this->omnibar->setFocus(); });
     QShortcut *seek_shortcut = new QShortcut(QKeySequence(Qt::Key_S), this);
-    connect(seek_shortcut, SIGNAL(activated()), this->omnibar, SLOT(setFocus()));
+    connect(seek_shortcut, &QShortcut::activated, this->omnibar, [this](){ this->omnibar->setFocus(); });
     QShortcut *seek_to_func_end_shortcut = new QShortcut(QKeySequence(Qt::Key_Dollar), this);
-    connect(seek_to_func_end_shortcut, SIGNAL(activated()), SLOT(seekToFunctionLastInstruction()));
+    connect(seek_to_func_end_shortcut, &QShortcut::activated, this, &MainWindow::seekToFunctionLastInstruction);
     QShortcut *seek_to_func_start_shortcut = new QShortcut(QKeySequence(Qt::Key_AsciiCircum), this);
-    connect(seek_to_func_start_shortcut, SIGNAL(activated()), SLOT(seekToFunctionStart()));
+    connect(seek_to_func_start_shortcut, &QShortcut::activated, this, &MainWindow::seekToFunctionStart);
 
     QShortcut *refresh_shortcut = new QShortcut(QKeySequence(QKeySequence::Refresh), this);
-    connect(refresh_shortcut, SIGNAL(activated()), this, SLOT(refreshAll()));
+    connect(refresh_shortcut, &QShortcut::activated, this, &MainWindow::refreshAll);
 
-    connect(ui->actionZoomIn, SIGNAL(triggered()), this, SLOT(onZoomIn()));
-    connect(ui->actionZoomOut, SIGNAL(triggered()), this, SLOT(onZoomOut()));
-    connect(ui->actionZoomReset, SIGNAL(triggered()), this, SLOT(onZoomReset()));
+    connect(ui->actionZoomIn, &QAction::triggered, this, &MainWindow::onZoomIn);
+    connect(ui->actionZoomOut, &QAction::triggered, this, &MainWindow::onZoomOut);
+    connect(ui->actionZoomReset, &QAction::triggered, this, &MainWindow::onZoomReset);
 
-    connect(core, SIGNAL(projectSaved(bool, const QString &)), this, SLOT(projectSaved(bool,
-                                                                                       const QString &)));
+    connect(core, &CutterCore::projectSaved, this, &MainWindow::projectSaved);
 
     connect(core, &CutterCore::toggleDebugView, this, &MainWindow::toggleDebugView);
 
-    connect(core, SIGNAL(newMessage(const QString &)),
-            this->consoleDock, SLOT(addOutput(const QString &)));
-    connect(core, SIGNAL(newDebugMessage(const QString &)),
-            this->consoleDock, SLOT(addDebugOutput(const QString &)));
+    connect(core, &CutterCore::newMessage,
+            this->consoleDock, &ConsoleWidget::addOutput);
+    connect(core, &CutterCore::newDebugMessage,
+            this->consoleDock, &ConsoleWidget::addDebugOutput);
 
     connect(core, &CutterCore::showMemoryWidgetRequested,
             this, static_cast<void(MainWindow::*)()>(&MainWindow::showMemoryWidget));
@@ -196,11 +202,38 @@ void MainWindow::initUI()
     connect(core->getAsyncTaskManager(), &AsyncTaskManager::tasksChanged, this,
             &MainWindow::updateTasksIndicator);
 
-    //Undo and redo seek
+    // Undo and redo seek
     ui->actionBackward->setShortcut(QKeySequence::Back);
     ui->actionForward->setShortcut(QKeySequence::Forward);
 
     initBackForwardMenu();
+
+    connect(core, &CutterCore::ioModeChanged, this, &MainWindow::setAvailableIOModeOptions);
+
+    QActionGroup *ioModeActionGroup = new QActionGroup(this);
+
+    ioModeActionGroup->addAction(ui->actionCacheMode);
+    ioModeActionGroup->addAction(ui->actionWriteMode);
+    ioModeActionGroup->addAction(ui->actionReadOnly);
+
+    connect(ui->actionCacheMode, &QAction::triggered, this, [this]() {
+        ioModesController.setIOMode(IOModesController::Mode::CACHE);
+        setAvailableIOModeOptions();
+    });
+
+    connect(ui->actionWriteMode, &QAction::triggered, this, [this]() {
+        ioModesController.setIOMode(IOModesController::Mode::WRITE);
+        setAvailableIOModeOptions();
+    });
+
+    connect(ui->actionReadOnly, &QAction::triggered, this, [this]() {
+        ioModesController.setIOMode(IOModesController::Mode::READ_ONLY);
+        setAvailableIOModeOptions();
+    });
+  
+    connect(ui->actionSaveLayout, &QAction::triggered, this, &MainWindow::saveNamedLayout);
+    connect(ui->actionManageLayouts, &QAction::triggered, this, &MainWindow::manageLayouts);
+    connect(ui->actionDocumentation, &QAction::triggered, this, &MainWindow::documentationClicked);
 
     /* Setup plugins interfaces */
     for (auto &plugin : Plugins()->getPlugins()) {
@@ -211,7 +244,12 @@ void MainWindow::initUI()
     ui->actionGrouped_dock_dragging->setVisible(false);
 #endif
 
-    initLayout();
+    enableDebugWidgetsMenu(false);
+    readSettings();
+
+    // Display tooltip for the Analyze Program action
+    ui->actionAnalyze->setToolTip("Analyze the program using radare2's \"aaa\" command");
+    ui->menuFile->setToolTipsVisible(true);
 }
 
 void MainWindow::initToolBar()
@@ -287,7 +325,7 @@ void MainWindow::initToolBar()
     this->visualNavbar->setMovable(false);
     addToolBarBreak(Qt::TopToolBarArea);
     addToolBar(visualNavbar);
-    QObject::connect(configuration, &Configuration::colorsUpdated, [this]() {
+    QObject::connect(configuration, &Configuration::colorsUpdated, this, [this]() {
         this->visualNavbar->updateGraphicsScene();
     });
     QObject::connect(configuration, &Configuration::interfaceThemeChanged, this, &MainWindow::chooseThemeIcons);
@@ -296,83 +334,98 @@ void MainWindow::initToolBar()
 void MainWindow::initDocks()
 {
     dockWidgets.reserve(20);
-    decompilerDock = new DecompilerWidget(this, ui->actionDecompiler);
-    consoleDock = new ConsoleWidget(this, ui->actionConsole);
+    decompilerDock = new DecompilerWidget(this);
+    consoleDock = new ConsoleWidget(this);
 
-    overviewDock = new OverviewWidget(this, ui->actionOverview);
+    overviewDock = new OverviewWidget(this);
     overviewDock->hide();
+    actionOverview = overviewDock->toggleViewAction();
     connect(overviewDock, &OverviewWidget::isAvailableChanged, this, [this](bool isAvailable) {
-        ui->actionOverview->setEnabled(isAvailable);
+        actionOverview->setEnabled(isAvailable);
     });
-    ui->actionOverview->setEnabled(overviewDock->getIsAvailable());
-    connect(ui->actionOverview, &QAction::toggled, [this](bool checked) {
-        if (checked) {
-            overviewDock->show();
-        } else {
-            overviewDock->hide();
-        }
-    });
+    actionOverview->setEnabled(overviewDock->getIsAvailable());
+    actionOverview->setChecked(overviewDock->getUserOpened());
 
-    ui->actionOverview->setChecked(overviewDock->getUserOpened());
-    sectionsDock = new SectionsWidget(this, ui->actionSections);
-    segmentsDock = new SegmentsWidget(this, ui->actionSegments);
-    entrypointDock = new EntrypointWidget(this, ui->actionEntrypoints);
-    functionsDock = new FunctionsWidget(this, ui->actionFunctions);
-    importsDock = new ImportsWidget(this, ui->actionImports);
-    exportsDock = new ExportsWidget(this, ui->actionExports);
-    headersDock = new HeadersWidget(this, ui->actionHeaders);
-    zignaturesDock = new ZignaturesWidget(this, ui->actionZignatures);
-    typesDock = new TypesWidget(this, ui->actionTypes);
-    searchDock = new SearchWidget(this, ui->actionSearch);
-    symbolsDock = new SymbolsWidget(this, ui->actionSymbols);
-    relocsDock = new RelocsWidget(this, ui->actionRelocs);
-    commentsDock = new CommentsWidget(this, ui->actionComments);
-    stringsDock = new StringsWidget(this, ui->actionStrings);
-    flagsDock = new FlagsWidget(this, ui->actionFlags);
-    stackDock = new StackWidget(this, ui->actionStack);
-    threadsDock = new ThreadsWidget(this, ui->actionThreads);
-    processesDock = new ProcessesWidget(this, ui->actionProcesses);
-    backtraceDock = new BacktraceWidget(this, ui->actionBacktrace);
-    registersDock = new RegistersWidget(this, ui->actionRegisters);
-    memoryMapDock = new MemoryMapWidget(this, ui->actionMemoryMap);
-    breakpointDock = new BreakpointWidget(this, ui->actionBreakpoint);
-    registerRefsDock = new RegisterRefsWidget(this, ui->actionRegisterRefs);
-    dashboardDock = new Dashboard(this, ui->actionDashboard);
-    sdbDock = new SdbWidget(this, ui->actionSDBBrowser);
-    classesDock = new ClassesWidget(this, ui->actionClasses);
-    resourcesDock = new ResourcesWidget(this, ui->actionResources);
-    vTablesDock = new VTablesWidget(this, ui->actionVTables);
+    dashboardDock = new Dashboard(this);
+    functionsDock = new FunctionsWidget(this);
+    typesDock = new TypesWidget(this);
+    searchDock = new SearchWidget(this);
+    commentsDock = new CommentsWidget(this);
+    stringsDock = new StringsWidget(this);
 
-    QSettings s;
-    QStringList docks = s.value("docks", QStringList {
-        DisassemblyWidget::getWidgetType(),
-        GraphWidget::getWidgetType(),
-        HexdumpWidget::getWidgetType()
-    }).toStringList();
+    QList<CutterDockWidget *> debugDocks = {
+        stackDock = new StackWidget(this),
+        threadsDock = new ThreadsWidget(this),
+        processesDock = new ProcessesWidget(this),
+        backtraceDock = new BacktraceWidget(this),
+        registersDock = new RegistersWidget(this),
+        memoryMapDock = new MemoryMapWidget(this),
+        breakpointDock = new BreakpointWidget(this),
+        registerRefsDock = new RegisterRefsWidget(this)
+    };
 
-    // Restore all extra widgets
-    QString className;
-    for (const auto &it : docks) {
-        if (std::none_of(dockWidgets.constBegin(), dockWidgets.constEnd(),
-        [&it](QDockWidget * w) { return w->objectName() == it; })) {
-            className = it.split(';').at(0);
-            if (widgetTypeToConstructorMap.contains(className)) {
-                auto widget = widgetTypeToConstructorMap[className](this, nullptr);
-                widget->setObjectName(it);
-                addExtraWidget(widget);
+    QList<CutterDockWidget *> infoDocks = {
+        classesDock = new ClassesWidget(this),
+        entrypointDock = new EntrypointWidget(this),
+        exportsDock = new ExportsWidget(this),
+        flagsDock = new FlagsWidget(this),
+        headersDock = new HeadersWidget(this),
+        importsDock = new ImportsWidget(this),
+        relocsDock = new RelocsWidget(this),
+        resourcesDock = new ResourcesWidget(this),
+        sdbDock = new SdbWidget(this),
+        sectionsDock = new SectionsWidget(this),
+        segmentsDock = new SegmentsWidget(this),
+        symbolsDock = new SymbolsWidget(this),
+        vTablesDock = new VTablesWidget(this),
+        zignaturesDock = new ZignaturesWidget(this),
+        r2GraphDock = new R2GraphWidget(this),
+        callGraphDock = new CallGraphWidget(this, false),
+        globalCallGraphDock = new CallGraphWidget(this, true),
+    };
+
+    auto makeActionList = [this](QList<CutterDockWidget *> docks) {
+        QList<QAction *> result;
+        for (auto dock : docks) {
+            if (dock != nullptr) {
+                result.push_back(dock->toggleViewAction());
+            } else {
+                auto separator = new QAction(this);
+                separator->setSeparator(true);
+                result.push_back(separator);
             }
         }
+        return result;
+    };
+
+    QList<CutterDockWidget *> windowDocks = {
+        dashboardDock,
+        nullptr,
+        functionsDock,
+        decompilerDock,
+        overviewDock,
+        nullptr,
+        searchDock,
+        stringsDock,
+        typesDock,
+        nullptr,
+    };
+    ui->menuWindows->insertActions(ui->actionExtraDisassembly, makeActionList(windowDocks));
+    QList<CutterDockWidget *> windowDocks2 = {
+        consoleDock,
+        commentsDock,
+        nullptr,
+    };
+    ui->menuWindows->addActions(makeActionList(windowDocks2));
+    ui->menuAddInfoWidgets->addActions(makeActionList(infoDocks));
+    ui->menuAddDebugWidgets->addActions(makeActionList(debugDocks));
+
+    auto uniqueDocks = windowDocks + windowDocks2 + infoDocks + debugDocks;
+    for (auto dock : uniqueDocks) {
+        if (dock) { // ignore nullptr used as separators
+            addWidget(dock);
+        }
     }
-}
-
-void MainWindow::initLayout()
-{
-    // Set up dock widgets default layout
-    enableDebugWidgetsMenu(false);
-    // Restore saved settings
-    readSettingsOrDefault();
-
-    initCorners();
 }
 
 void MainWindow::toggleOverview(bool visibility, GraphWidget *targetGraph)
@@ -393,29 +446,29 @@ void MainWindow::updateTasksIndicator()
 
 void MainWindow::addExtraGraph()
 {
-    auto *extraDock = new GraphWidget(this, nullptr);
+    auto *extraDock = new GraphWidget(this);
     addExtraWidget(extraDock);
 }
 
 void MainWindow::addExtraHexdump()
 {
-    auto *extraDock = new HexdumpWidget(this, nullptr);
+    auto *extraDock = new HexdumpWidget(this);
     addExtraWidget(extraDock);
 }
 
 void MainWindow::addExtraDisassembly()
 {
-    auto *extraDock = new DisassemblyWidget(this, nullptr);
+    auto *extraDock = new DisassemblyWidget(this);
     addExtraWidget(extraDock);
 }
 
 void MainWindow::addExtraWidget(CutterDockWidget *extraDock)
 {
     extraDock->setTransient(true);
-    addDockWidget(Qt::TopDockWidgetArea, extraDock, Qt::Orientation::Horizontal);
-    auto restoreExtraDock = qhelpers::forceWidth(extraDock->widget(), 600);
-    qApp->processEvents();
-    restoreExtraDock.restoreWidth(extraDock->widget());
+    dockOnMainArea(extraDock);
+    addWidget(extraDock);
+    extraDock->show();
+    extraDock->raise();
 }
 
 QMenu *MainWindow::getMenuByType(MenuType type)
@@ -440,14 +493,12 @@ QMenu *MainWindow::getMenuByType(MenuType type)
     }
 }
 
-void MainWindow::addPluginDockWidget(QDockWidget *dockWidget, QAction *action)
+void MainWindow::addPluginDockWidget(CutterDockWidget *dockWidget)
 {
-    addDockWidget(Qt::TopDockWidgetArea, dockWidget);
-    dockWidget->addAction(action);
     addWidget(dockWidget);
-    ui->menuPlugins->addAction(action);
+    ui->menuPlugins->addAction(dockWidget->toggleViewAction());
     addDockWidget(Qt::DockWidgetArea::TopDockWidgetArea, dockWidget);
-    updateDockActionChecked(action);
+    pluginDocks.push_back(dockWidget);
 }
 
 void MainWindow::addMenuFileAction(QAction *action)
@@ -546,52 +597,46 @@ void MainWindow::finalizeOpen()
     core->getOpcodes();
     core->updateSeek();
     refreshAll();
-
     // Add fortune message
     core->message("\n" + core->cmdRaw("fo"));
-    showMaximized();
-    Config()->adjustColorThemeDarkness();
 
-    QSettings s;
-    QStringList unsync = s.value("unsync").toStringList();
-    for (auto it : dockWidgets) {
-        auto w = qobject_cast<MemoryDockWidget*>(it);
-        if (w) {
-            w->getSeekable()->setSynchronization(!unsync.contains(it->objectName()));
-        }
+    // hide all docks before showing window to avoid false positive for refreshDeferrer
+    for (auto dockWidget : dockWidgets) {
+        dockWidget->hide();
     }
 
+    QSettings settings;
+    auto geometry = settings.value("geometry").toByteArray();
+    if (!geometry.isEmpty()) {
+        restoreGeometry(geometry);
+        show();
+    } else {
+        showMaximized();
+    }
+
+    Config()->adjustColorThemeDarkness();
+    setViewLayout(getViewLayout(LAYOUT_DEFAULT));
+
+
     // Set focus to disasm or graph widget
-
-    // Use for loop to cover cases when main disasm/graph
-    // (MainWindow::disassemblyDock and MainWindow::graphDock)
-    // widgets are invisible but extra ones are visible
-
-    // Graph with function in it has focus priority over DisasmWidget
-    // if there are both graph and disasm.
-    // Otherwise Disasm has focus priority over Graph
-
+    // Graph with function in it has focus priority over DisasmWidget.
     // If there are no graph/disasm widgets focus on MainWindow
 
     setFocus();
     bool graphContainsFunc = false;
     for (auto dockWidget : dockWidgets) {
-        const QString className = dockWidget->metaObject()->className();
-        auto graphWidget = qobject_cast<GraphWidget*>(dockWidget);
-        if (graphWidget && !dockWidget->visibleRegion().isNull()) {
+        auto graphWidget = qobject_cast<GraphWidget *>(dockWidget);
+        if (graphWidget && dockWidget->isVisibleToUser()) {
             graphContainsFunc = !graphWidget->getGraphView()->getBlocks().empty();
             if (graphContainsFunc) {
-                dockWidget->widget()->setFocus();
+                dockWidget->raiseMemoryWidget();
                 break;
             }
         }
-        auto disasmWidget = qobject_cast<DisassemblyWidget*>(dockWidget);
-        if (disasmWidget && !dockWidget->visibleRegion().isNull()) {
-            if (!graphContainsFunc) {
-                disasmWidget->setFocus();
-            } else {
-                break;
-            }
+        auto disasmWidget = qobject_cast<DisassemblyWidget *>(dockWidget);
+        if (disasmWidget && dockWidget->isVisibleToUser()) {
+            disasmWidget->raiseMemoryWidget();
+            // continue looping in case there is a graph wiget
         }
     }
 }
@@ -629,20 +674,10 @@ void MainWindow::closeEvent(QCloseEvent *event)
 {
 
     // Check if there are uncommitted changes
-    if (core->isIOCacheEnabled() && !core->cmdj("wcj").array().isEmpty()) {
-
-        QMessageBox::StandardButton ret = QMessageBox::question(this, APPNAME,
-                                                                tr("It seems that you have changes or patches that are not committed to the file.\n"
-                                                                "Do you want to commit them now?"),
-                                                                (QMessageBox::StandardButtons)(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel));
-        if (ret == QMessageBox::Cancel) {
-            event->ignore();
-            return;
-        }
-
-        if (ret == QMessageBox::Save) {
-            core->commitWriteCache();
-        } 
+    if (!ioModesController.askCommitUnsavedChanges()) {
+        // if false, Cancel was chosen
+        event->ignore();
+        return;
     }
 
     QMessageBox::StandardButton ret = QMessageBox::question(this, APPNAME,
@@ -671,41 +706,18 @@ void MainWindow::paintEvent(QPaintEvent *event)
     QMainWindow::paintEvent(event);
     /*
      * Dirty hack
-     * Just to adjust the width of Functions Widget to fixed size
-     * After everything is drawn, safely make it Preferred size policy
-     * So that user can change the widget size with the mouse
+     * Just to adjust the width of Functions Widget to fixed size.
+     * After everything is drawn, restore the max width limit.
      */
-    if (functionsDock) {
-        functionsDock->changeSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
+    if (functionsDock && functionDockWidthToRestore) {
+        functionsDock->setMaximumWidth(functionDockWidthToRestore);
+        functionDockWidthToRestore = 0;
     }
 }
 
-void MainWindow::readSettingsOrDefault()
+void MainWindow::readSettings()
 {
     QSettings settings;
-    QByteArray geo = settings.value("geometry", QByteArray()).toByteArray();
-    QByteArray state = settings.value("state", QByteArray()).toByteArray();
-    /*
-     * Check if saved settings exist
-     * If not, then read the default layout
-     */
-    if (!geo.length() || !state.length()) {
-        resetToDefaultLayout();
-        return;
-    }
-    hideAllDocks();
-    restoreGeometry(geo);
-    restoreState(state);
-
-    // make sure all DockWidgets are part of the MainWindow
-    // also show them, so newly installed plugin widgets are shown right away
-    for (auto dockWidget : dockWidgets) {
-        if (dockWidgetArea(dockWidget) == Qt::DockWidgetArea::NoDockWidgetArea &&
-            !isDebugWidget(dockWidget)) {
-            addDockWidget(Qt::DockWidgetArea::TopDockWidgetArea, dockWidget);
-            dockWidget->show();
-        }
-    }
 
     responsive = settings.value("responsive").toBool();
     panelLock = settings.value("panelLock").toBool();
@@ -716,59 +728,22 @@ void MainWindow::readSettingsOrDefault()
     ui->actionGrouped_dock_dragging->setChecked(dockGroupedDragging);
     on_actionGrouped_dock_dragging_triggered(dockGroupedDragging);
 
-    QPoint pos = settings.value("pos", QPoint(200, 200)).toPoint();
-    QSize size = settings.value("size", QSize(400, 400)).toSize();
-    resize(size);
-    move(pos);
-    updateDockActionsChecked();
+    loadLayouts(settings);
 }
 
 void MainWindow::saveSettings()
 {
     QSettings settings;
 
-    QStringList docks;
-    QStringList unsync;
-    for (const auto &it : dockWidgets) {
-        docks.append(it->objectName());
-        auto memoryDockWidget = qobject_cast<MemoryDockWidget*>(it);
-        if (memoryDockWidget && !memoryDockWidget->getSeekable()->isSynchronized()) {
-            unsync.append(it->objectName());
-        }
-    }
-    settings.setValue("docks", docks);
-    settings.setValue("unsync", unsync);
-    settings.setValue("geometry", saveGeometry());
-    settings.setValue("size", size());
-    settings.setValue("pos", pos());
-    settings.setValue("state", saveState());
     settings.setValue("panelLock", panelLock);
     settings.setValue("tabsOnTop", tabsOnTop);
     settings.setValue("docksGroupedDragging", ui->actionGrouped_dock_dragging->isChecked());
+    settings.setValue("geometry", saveGeometry());
+
+    layouts[Core()->currentlyDebugging ? LAYOUT_DEBUG : LAYOUT_DEFAULT] = getViewLayout();
+    saveLayouts(settings);
 }
 
-void MainWindow::readDebugSettings()
-{
-    QSettings settings;
-    QByteArray geo = settings.value("debug.geometry", QByteArray()).toByteArray();
-    restoreGeometry(geo);
-    QByteArray state = settings.value("debug.state", QByteArray()).toByteArray();
-    restoreState(state);
-    QPoint pos = settings.value("pos", QPoint(200, 200)).toPoint();
-    QSize size = settings.value("size", QSize(400, 400)).toSize();
-    resize(size);
-    move(pos);
-    updateDockActionsChecked();
-}
-
-void MainWindow::saveDebugSettings()
-{
-    QSettings settings;
-    settings.setValue("debug.geometry", saveGeometry());
-    settings.setValue("debug.state", saveState());
-    settings.setValue("size", size());
-    settings.setValue("pos", pos());
-}
 
 void MainWindow::setPanelLock()
 {
@@ -819,12 +794,19 @@ void MainWindow::lockUnlock_Docks(bool what)
 
 void MainWindow::restoreDocks()
 {
-    // In the upper half the functions are the first widget
-    addDockWidget(Qt::TopDockWidgetArea, functionsDock);
-    addDockWidget(Qt::TopDockWidgetArea, overviewDock);
-
-    // Function | Dashboard
+    // Initial structure
+    // func | main area | debug
+    //      |___________|
+    //      | console   |
+    addDockWidget(Qt::LeftDockWidgetArea, functionsDock);
     splitDockWidget(functionsDock, dashboardDock, Qt::Horizontal);
+    splitDockWidget(dashboardDock, stackDock, Qt::Horizontal);
+    splitDockWidget(dashboardDock, consoleDock, Qt::Vertical);
+
+    // overview bellow func
+    splitDockWidget(functionsDock, overviewDock, Qt::Vertical);
+
+    // main area
     tabifyDockWidget(dashboardDock, decompilerDock);
     tabifyDockWidget(dashboardDock, entrypointDock);
     tabifyDockWidget(dashboardDock, flagsDock);
@@ -844,48 +826,29 @@ void MainWindow::restoreDocks()
     tabifyDockWidget(dashboardDock, memoryMapDock);
     tabifyDockWidget(dashboardDock, breakpointDock);
     tabifyDockWidget(dashboardDock, registerRefsDock);
+    tabifyDockWidget(dashboardDock, r2GraphDock);
+    tabifyDockWidget(dashboardDock, callGraphDock);
+    tabifyDockWidget(dashboardDock, globalCallGraphDock);
     for (const auto &it : dockWidgets) {
         // Check whether or not current widgets is graph, hexdump or disasm
-        if (qobject_cast<GraphWidget*>(it) ||
-            qobject_cast<HexdumpWidget*>(it) ||
-            qobject_cast<DisassemblyWidget*>(it)) {
+        if (isExtraMemoryWidget(it)) {
             tabifyDockWidget(dashboardDock, it);
         }
     }
 
-    splitDockWidget(functionsDock, overviewDock, Qt::Vertical);
-
-    // In the lower half the console is the first widget
-    addDockWidget(Qt::BottomDockWidgetArea, consoleDock);
-
-    // Console | Sections
+    // Console | Sections/segments/comments
     splitDockWidget(consoleDock, sectionsDock, Qt::Horizontal);
-    splitDockWidget(consoleDock, segmentsDock, Qt::Horizontal);
-
+    tabifyDockWidget(sectionsDock, segmentsDock);
     tabifyDockWidget(sectionsDock, commentsDock);
 
     // Add Stack, Registers, Threads and Backtrace vertically stacked
-    addDockWidget(Qt::TopDockWidgetArea, stackDock);
     splitDockWidget(stackDock, registersDock, Qt::Vertical);
     tabifyDockWidget(stackDock, backtraceDock);
     tabifyDockWidget(backtraceDock, threadsDock);
     tabifyDockWidget(threadsDock, processesDock);
 
-    updateDockActionsChecked();
-}
-
-
-void MainWindow::hideAllDocks()
-{
-    for (auto w : dockWidgets) {
-        removeDockWidget(w);
-    }
-}
-
-void MainWindow::updateDockActionsChecked()
-{
-    for (auto i = dockWidgetsOfAction.constBegin(); i != dockWidgetsOfAction.constEnd(); i++) {
-        updateDockActionChecked(i.key());
+    for (auto dock : pluginDocks) {
+        dockOnMainArea(dock);
     }
 }
 
@@ -899,6 +862,13 @@ bool MainWindow::isDebugWidget(QDockWidget *dock) const
            dock == breakpointDock ||
            dock == processesDock ||
            dock == registerRefsDock;
+}
+
+bool MainWindow::isExtraMemoryWidget(QDockWidget *dock) const
+{
+    return qobject_cast<GraphWidget*>(dock) ||
+            qobject_cast<HexdumpWidget*>(dock) ||
+            qobject_cast<DisassemblyWidget*>(dock);
 }
 
 MemoryWidgetType MainWindow::getMemoryWidgetTypeToRestore()
@@ -957,13 +927,36 @@ void MainWindow::showMemoryWidget(MemoryWidgetType type)
     memoryDockWidget->raiseMemoryWidget();
 }
 
-QMenu *MainWindow::createShowInMenu(QWidget *parent, RVA address)
+QMenu *MainWindow::createShowInMenu(QWidget *parent, RVA address,  AddressTypeHint addressType)
 {
     QMenu *menu = new QMenu(parent);
+    // Memory dock widgets
     for (auto &dock : dockWidgets) {
         if (auto memoryWidget = qobject_cast<MemoryDockWidget *>(dock)) {
+            if (memoryWidget->getType() == MemoryWidgetType::Graph
+                    || memoryWidget->getType() == MemoryWidgetType::Decompiler)
+            {
+                if (addressType == AddressTypeHint::Data) {
+                    continue;
+                }
+            }
             QAction *action = new QAction(memoryWidget->windowTitle(), menu);
-            connect(action, &QAction::triggered, this, [this, memoryWidget, address](){
+            connect(action, &QAction::triggered, this, [memoryWidget, address]() {
+                memoryWidget->getSeekable()->seek(address);
+                memoryWidget->raiseMemoryWidget();
+            });
+            menu->addAction(action);
+        }
+    }
+    menu->addSeparator();
+    // Rest of the AddressableDockWidgets that weren't added already
+    for (auto &dock : dockWidgets) {
+        if (auto memoryWidget = qobject_cast<AddressableDockWidget *>(dock)) {
+            if (qobject_cast<MemoryDockWidget *>(dock)) {
+                continue;
+            }
+            QAction *action = new QAction(memoryWidget->windowTitle(), menu);
+            connect(action, &QAction::triggered, this, [memoryWidget, address]() {
                 memoryWidget->getSeekable()->seek(address);
                 memoryWidget->raiseMemoryWidget();
             });
@@ -973,13 +966,15 @@ QMenu *MainWindow::createShowInMenu(QWidget *parent, RVA address)
     menu->addSeparator();
     auto createAddNewWidgetAction = [this, menu, address](QString label, MemoryWidgetType type) {
         QAction *action = new QAction(label, menu);
-        connect(action, &QAction::triggered, this, [this, address, type](){
+        connect(action, &QAction::triggered, this, [this, address, type]() {
             addNewMemoryWidget(type, address, false);
         });
         menu->addAction(action);
     };
     createAddNewWidgetAction(tr("New disassembly"), MemoryWidgetType::Disassembly);
-    createAddNewWidgetAction(tr("New graph"), MemoryWidgetType::Graph);
+    if (addressType != AddressTypeHint::Data) {
+        createAddNewWidgetAction(tr("New graph"), MemoryWidgetType::Graph);
+    }
     createAddNewWidgetAction(tr("New hexdump"), MemoryWidgetType::Hexdump);
 
     return menu;
@@ -1021,18 +1016,6 @@ MemoryDockWidget *MainWindow::addNewMemoryWidget(MemoryWidgetType type, RVA addr
     seekable->seek(address);
     addExtraWidget(memoryWidget);
     return memoryWidget;
-}
-
-void MainWindow::initCorners()
-{
-    // TODO: Allow the user to select this option visually in the GUI settings
-    // Adjust the DockWidget areas
-
-    setCorner(Qt::TopLeftCorner, Qt::LeftDockWidgetArea);
-    setCorner(Qt::BottomLeftCorner, Qt::LeftDockWidgetArea);
-
-    setCorner(Qt::BottomRightCorner, Qt::BottomDockWidgetArea);
-    setCorner(Qt::TopRightCorner, Qt::RightDockWidgetArea);
 }
 
 void MainWindow::initBackForwardMenu()
@@ -1135,21 +1118,53 @@ void MainWindow::updateHistoryMenu(QMenu *menu, bool redo)
 
 }
 
-void MainWindow::addWidget(QDockWidget* widget)
+void MainWindow::updateLayoutsMenu()
+{
+    ui->menuLayouts->clear();
+    for (auto it = layouts.begin(), end = layouts.end(); it != end; ++it) {
+        QString name = it.key();
+        if (isBuiltinLayoutName(name)) {
+            continue;
+        }
+        auto action = new QAction(it.key(), ui->menuLayouts);
+        connect(action, &QAction::triggered, this, [this, name]() {
+            setViewLayout(getViewLayout(name));
+        });
+        ui->menuLayouts->addAction(action);
+    }
+}
+
+void MainWindow::saveNamedLayout()
+{
+    bool ok = false;
+    QString name;
+    QStringList names = layouts.keys();
+    names.removeAll(LAYOUT_DEBUG);
+    names.removeAll(LAYOUT_DEFAULT);
+    while (name.isEmpty() || isBuiltinLayoutName(name)) {
+        if (ok) {
+            QMessageBox::warning(this, tr("Save layout error"), tr("'%1' is not a valid name.").arg(name));
+        }
+        name = QInputDialog::getItem(this, tr("Save layout"), tr("Enter name"), names, -1, true, &ok);
+        if (!ok) {
+            return;
+        }
+    }
+    layouts[name] = getViewLayout();
+    updateLayoutsMenu();
+    saveSettings();
+}
+
+void MainWindow::manageLayouts()
+{
+    LayoutManager layoutManger(layouts, this);
+    layoutManger.exec();
+    updateLayoutsMenu();
+}
+
+void MainWindow::addWidget(CutterDockWidget *widget)
 {
     dockWidgets.push_back(widget);
-    for (auto action : widget->actions()) {
-        dockWidgetsOfAction.insert(action, widget);
-        connect(qobject_cast<CutterDockWidget*>(widget), &CutterDockWidget::closed,
-                this, [this]() {
-            QDockWidget *widget = qobject_cast<QDockWidget*>(sender());
-            dockWidgets.removeOne(widget);
-            for (auto action : widget->actions()) {
-                dockWidgetsOfAction.remove(action, widget);
-            }
-            updateDockActionsChecked();
-        });
-    }    
 }
 
 void MainWindow::addMemoryDockWidget(MemoryDockWidget *widget)
@@ -1161,24 +1176,16 @@ void MainWindow::addMemoryDockWidget(MemoryDockWidget *widget)
     });
 }
 
-void MainWindow::removeWidget(QDockWidget *widget)
+void MainWindow::removeWidget(CutterDockWidget *widget)
 {
     dockWidgets.removeAll(widget);
+    pluginDocks.removeAll(widget);
     if (lastSyncMemoryWidget == widget) {
         lastSyncMemoryWidget = nullptr;
     }
     if (lastMemoryWidget == widget) {
         lastMemoryWidget = nullptr;
     }
-}
-
-void MainWindow::updateDockActionChecked(QAction *action)
-{
-    auto actions = dockWidgetsOfAction.values(action);
-    action->setChecked(!std::accumulate(actions.begin(), actions.end(), false,
-                                       [](bool a, QDockWidget* w) -> bool {
-        return a || w->isHidden();
-    }));
 }
 
 void MainWindow::showZenDocks()
@@ -1189,18 +1196,15 @@ void MainWindow::showZenDocks()
                                             searchDock,
                                             importsDock
                                           };
-    int width = functionsDock->maximumWidth();
+    functionDockWidthToRestore = functionsDock->maximumWidth();
     functionsDock->setMaximumWidth(200);
     for (auto w : dockWidgets) {
         if (zenDocks.contains(w) ||
-            qobject_cast<GraphWidget*>(w) ||
-            qobject_cast<HexdumpWidget*>(w) ||
-            qobject_cast<DisassemblyWidget*>(w)) {
+            isExtraMemoryWidget(w)) {
             w->show();
         }
     }
-    functionsDock->setMaximumWidth(width);
-    updateDockActionsChecked();
+    dashboardDock->raise();
 }
 
 void MainWindow::showDebugDocks()
@@ -1215,18 +1219,54 @@ void MainWindow::showDebugDocks()
                                               memoryMapDock,
                                               breakpointDock
                                             };
-    int width = functionsDock->maximumWidth();
+    functionDockWidthToRestore = functionsDock->maximumWidth();
     functionsDock->setMaximumWidth(200);
+    auto registerWidth = qhelpers::forceWidth(registersDock, std::min(500, this->width() / 4));
+    auto registerHeight = qhelpers::forceHeight(registersDock, std::max(100, height() / 2));
+    QDockWidget *widgetToFocus = nullptr;
     for (auto w : dockWidgets) {
         if (debugDocks.contains(w) ||
-            qobject_cast<GraphWidget*>(w) ||
-            qobject_cast<HexdumpWidget*>(w) ||
-            qobject_cast<DisassemblyWidget*>(w)) {
+            isExtraMemoryWidget(w)) {
             w->show();
         }
+        if (qobject_cast<DisassemblyWidget*>(w)) {
+            widgetToFocus = w;
+        }
     }
-    functionsDock->setMaximumWidth(width);
-    updateDockActionsChecked();
+    registerHeight.restoreHeight(registersDock);
+    registerWidth.restoreWidth(registersDock);
+    if (widgetToFocus) {
+        widgetToFocus->raise();
+    }
+}
+
+void MainWindow::dockOnMainArea(QDockWidget *widget)
+{
+    QDockWidget* best = nullptr;
+    float bestScore = 1;
+    // choose best existing area for placing the new widget
+    for (auto dock : dockWidgets) {
+        if (dock->isHidden() || dock == widget ||
+            dock->isFloating() || // tabifying onto floating dock using code doesn't work well
+            dock->parentWidget() != this) { // floating group isn't considered floating
+            continue;
+        }
+        float newScore = 0;
+        if (isExtraMemoryWidget(dock)) {
+            newScore += 10000000; // prefer existing disssasembly and graph widgets
+        }
+        newScore += dock->width() * dock->height(); // the bigger the better
+
+        if (newScore > bestScore) {
+            bestScore = newScore;
+            best = dock;
+        }
+    }
+    if (best) {
+        tabifyDockWidget(best, widget);
+    } else {
+        addDockWidget(Qt::TopDockWidgetArea, widget, Qt::Orientation::Horizontal);
+    }
 }
 
 void MainWindow::enableDebugWidgetsMenu(bool enable)
@@ -1239,57 +1279,151 @@ void MainWindow::enableDebugWidgetsMenu(bool enable)
     }
 }
 
-void MainWindow::resetToDefaultLayout()
+CutterLayout MainWindow::getViewLayout()
 {
-    hideAllDocks();
-    restoreDocks();
-    showZenDocks();
-    dashboardDock->raise();
-}
+    CutterLayout layout;
+    layout.geometry = saveGeometry();
+    layout.state = saveState();
 
-void MainWindow::resetToDebugLayout()
-{
-    MemoryWidgetType memType = getMemoryWidgetTypeToRestore();
-    hideAllDocks();
-    restoreDocks();
-    showDebugDocks();
-    showMemoryWidget(memType);
-
-    auto restoreStackDock = qhelpers::forceWidth(stackDock->widget(), 400);
-    qApp->processEvents();
-    restoreStackDock.restoreWidth(stackDock->widget());
-}
-
-void MainWindow::restoreDebugLayout()
-{
-    MemoryWidgetType memType = getMemoryWidgetTypeToRestore();
-    bool isMaxim = isMaximized();
-    hideAllDocks();
-    restoreDocks();
-    showDebugDocks();
-    readDebugSettings();
-    showMemoryWidget(memType);
-    if (isMaxim) {
-        showMaximized();
-    } else {
-        showNormal();
+    for (auto dock : dockWidgets) {
+        QVariantMap properties;
+        if (auto cutterDock = qobject_cast<CutterDockWidget *>(dock)) {
+            properties = cutterDock->serializeViewProprties();
+        }
+        layout.viewProperties.insert(dock->objectName(), std::move(properties));
     }
+    return layout;
 }
 
-void MainWindow::resetDockWidgetList()
+CutterLayout MainWindow::getViewLayout(const QString &name)
 {
-    QStringList isLeft;
-    QList<QWidget*> toClose;
-    for (auto it : dockWidgets) {
-        if (isLeft.contains(it->metaObject()->className())) {
-            toClose.append(it);
-        } else if (QRegularExpression("\\A(?:\\w+ \\d+)\\z").match(it->objectName()).hasMatch()) {
-            isLeft.append(it->metaObject()->className());
+    auto it = layouts.find(name);
+    if (it != layouts.end()) {
+        return *it;
+    }
+    return {};
+}
+
+void MainWindow::setViewLayout(const CutterLayout &layout)
+{
+    bool isDefault = layout.state.isEmpty() || layout.geometry.isEmpty();
+    bool isDebug = Core()->currentlyDebugging;
+
+    // make a copy to avoid iterating over container from which items are being removed
+    auto widgetsToClose = dockWidgets;
+
+    for (auto dock : widgetsToClose) {
+        dock->hide();
+        dock->close();
+        dock->setFloating(false); // tabifyDockWidget doesn't work if dock is floating
+        removeDockWidget(dock);
+    }
+
+    QStringList docksToCreate;
+    if (isDefault) {
+        docksToCreate = QStringList {
+            DisassemblyWidget::getWidgetType(),
+            GraphWidget::getWidgetType(),
+            HexdumpWidget::getWidgetType()
+        };
+    } else {
+        docksToCreate = layout.viewProperties.keys();
+    }
+
+    for (const auto &it : docksToCreate) {
+        if (std::none_of(dockWidgets.constBegin(), dockWidgets.constEnd(),
+        [&it](QDockWidget * w) { return w->objectName() == it; })) {
+            auto className = it.split(';').at(0);
+            if (widgetTypeToConstructorMap.contains(className)) {
+                auto widget = widgetTypeToConstructorMap[className](this);
+                widget->setObjectName(it);
+                addExtraWidget(widget);
+            }
         }
     }
-    for (auto it : toClose) {
-        it->close();
+
+    restoreDocks();
+
+    QList<QDockWidget *> newDocks;
+
+    for (auto dock : dockWidgets) {
+        auto properties = layout.viewProperties.find(dock->objectName());
+        if (properties != layout.viewProperties.end()) {
+            dock->deserializeViewProperties(*properties);
+        } else {
+            dock->deserializeViewProperties({}); // call with empty properties to reset the widget
+            newDocks.push_back(dock);
+        }
+        dock->ignoreVisibilityStatus(true);
     }
+
+    if (!isDefault) {
+        restoreState(layout.state);
+
+        for (auto dock : newDocks) {
+            dock->hide(); // hide to prevent dockOnMainArea putting them on each other
+        }
+        for (auto dock : newDocks) {
+            dockOnMainArea(dock);
+            // Show any new docks by default.
+            // Showing new builtin docks helps discovering features added in latest release.
+            // Installing a new plugin hints that usre will likely want to use it.
+            dock->show();
+        }
+    } else {
+        if (isDebug) {
+            showDebugDocks();
+        } else {
+            showZenDocks();
+        }
+    }
+
+    for (auto dock : dockWidgets) {
+        dock->ignoreVisibilityStatus(false);
+    }
+    lastSyncMemoryWidget = nullptr;
+    lastMemoryWidget = nullptr;
+}
+
+void MainWindow::loadLayouts(QSettings &settings)
+{
+    this->layouts.clear();
+    int size = settings.beginReadArray("layouts");
+    for (int i = 0; i < size; i++) {
+        CutterLayout layout;
+        settings.setArrayIndex(i);
+        QString name = settings.value("name", "layout").toString();
+        layout.geometry = settings.value("geometry").toByteArray();
+        layout.state = settings.value("state").toByteArray();
+
+        auto docks = settings.value("docks").toMap();
+        for (auto it = docks.begin(), end = docks.end(); it != end; it++) {
+            layout.viewProperties.insert(it.key(), it.value().toMap());
+        }
+
+        layouts.insert(name, std::move(layout));
+    }
+    settings.endArray();
+    updateLayoutsMenu();
+}
+
+void MainWindow::saveLayouts(QSettings &settings)
+{
+    settings.beginWriteArray("layouts", layouts.size());
+    int arrayIndex = 0;
+    for (auto it = layouts.begin(), end = layouts.end(); it != end; ++it, ++arrayIndex) {
+        settings.setArrayIndex(arrayIndex);
+        settings.setValue("name", it.key());
+        auto &layout = it.value();
+        settings.setValue("state", layout.state);
+        settings.setValue("geometry", layout.geometry);
+        QVariantMap properties;
+        for (auto it = layout.viewProperties.begin(), end = layout.viewProperties.end(); it != end; ++it) {
+            properties.insert(it.key(), it.value());
+        }
+        settings.setValue("docks", properties);
+    }
+    settings.endArray();
 }
 
 void MainWindow::on_actionLock_triggered()
@@ -1313,32 +1447,14 @@ void MainWindow::on_actionLockUnlock_triggered()
     }
 }
 
-void MainWindow::on_actionFunctionsRename_triggered()
-{
-    RenameDialog r(this);
-    // Get function based on click position
-    //r->setFunctionName(fcn_name);
-    r.exec();
-}
-
 void MainWindow::on_actionDefault_triggered()
 {
-    QSettings s;
-    restoreState(emptyState);
-
-    initCorners();
-    resetDockWidgetList();
-
     if (core->currentlyDebugging) {
-        resetToDefaultLayout();
-        saveSettings();
-
-        resetToDebugLayout();
+        layouts[LAYOUT_DEBUG] = {};
+        setViewLayout(layouts[LAYOUT_DEBUG]);
     } else {
-        resetToDebugLayout();
-        saveDebugSettings();
-
-        resetToDefaultLayout();
+        layouts[LAYOUT_DEFAULT] = {};
+        setViewLayout(layouts[LAYOUT_DEFAULT]);
     }
 }
 
@@ -1419,7 +1535,8 @@ void MainWindow::on_actionReset_settings_triggered()
                                                            QMessageBox::Ok | QMessageBox::Cancel);
     if (ret == QMessageBox::Ok) {
         Config()->resetAll();
-        on_actionDefault_triggered();
+        readSettings();
+        setViewLayout(getViewLayout(Core()->currentlyDebugging ? LAYOUT_DEBUG : LAYOUT_DEFAULT));
     }
 }
 
@@ -1473,14 +1590,34 @@ void MainWindow::on_actionIssue_triggered()
     openIssue();
 }
 
+void MainWindow::documentationClicked()
+{
+    QDesktopServices::openUrl(QUrl("https://cutter.re/docs/user-docs"));
+}
+
 void MainWindow::on_actionRefresh_Panels_triggered()
 {
     this->refreshAll();
 }
 
+/**
+ * @brief A signal that creates an AsyncTask to re-analyze the current file
+ */
 void MainWindow::on_actionAnalyze_triggered()
 {
-    // TODO: implement this, but do NOT open InitialOptionsDialog!!
+    auto *analTask = new AnalTask();
+    InitialOptions options;
+    options.analCmd = { {"aaa", "Auto analysis"} };
+    analTask->setOptions(options);
+    AsyncTask::Ptr analTaskPtr(analTask);
+
+    auto *taskDialog = new AsyncTaskDialog(analTaskPtr);
+    taskDialog->setInterruptOnClose(true);
+    taskDialog->setAttribute(Qt::WA_DeleteOnClose);
+    taskDialog->show();
+    connect(analTask, &AnalTask::finished, this, &MainWindow::refreshAll);
+
+    Core()->getAsyncTaskManager()->start(analTaskPtr);
 }
 
 void MainWindow::on_actionImportPDB_triggered()
@@ -1586,19 +1723,17 @@ void MainWindow::projectSaved(bool successfully, const QString &name)
 
 void MainWindow::toggleDebugView()
 {
+    MemoryWidgetType memType = getMemoryWidgetTypeToRestore();
     if (Core()->currentlyDebugging) {
-        saveSettings();
-        restoreDebugLayout();
+        layouts[LAYOUT_DEFAULT] = getViewLayout();
+        setViewLayout(getViewLayout(LAYOUT_DEBUG));
         enableDebugWidgetsMenu(true);
     } else {
-        saveDebugSettings();
-        MemoryWidgetType memType = getMemoryWidgetTypeToRestore();
-        hideAllDocks();
-        restoreDocks();
-        readSettingsOrDefault();
+        layouts[LAYOUT_DEBUG] = getViewLayout();
+        setViewLayout(getViewLayout(LAYOUT_DEFAULT));
         enableDebugWidgetsMenu(false);
-        showMemoryWidget(memType);
     }
+    showMemoryWidget(memType);
 }
 
 void MainWindow::mousePressEvent(QMouseEvent *event)
@@ -1698,5 +1833,19 @@ QMenu *MainWindow::getContextMenuExtensions(ContextMenuType type)
         return addressableContextMenuExtensions;
     default:
         return nullptr;
+    }
+}
+
+void MainWindow::setAvailableIOModeOptions()
+{
+    switch (ioModesController.getIOMode()) {
+    case IOModesController::Mode::WRITE:
+        ui->actionWriteMode->setChecked(true);
+        break;
+    case IOModesController::Mode::CACHE:
+        ui->actionCacheMode->setChecked(true);
+        break;
+    default:
+        ui->actionReadOnly->setChecked(true);
     }
 }

@@ -31,6 +31,7 @@ moc_*.h
 ui_*.h
 build*/
 cmake-build-*/
+/src-build/
 
 # QtCreator
 *.autosave
@@ -58,6 +59,7 @@ src/CMakeFiles/*
 ninja.exe
 r2_dist_x86/
 r2_dist_x64/
+r2_dist/
 *.pdb
 
 # Mesonbuild
@@ -70,6 +72,7 @@ __pycache__
 # Other
 compile_commands.json
 .ccls-cache
+docs/source/_build
 
 # vscode
 **/.vscode

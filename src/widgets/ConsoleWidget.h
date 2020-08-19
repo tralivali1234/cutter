@@ -24,7 +24,7 @@ class ConsoleWidget : public CutterDockWidget
     Q_OBJECT
 
 public:
-    explicit ConsoleWidget(MainWindow *main, QAction *action = nullptr);
+    explicit ConsoleWidget(MainWindow *main);
 
     ~ConsoleWidget();
 
@@ -39,7 +39,8 @@ public:
     }
 
 protected:
-    bool eventFilter(QObject *obj, QEvent *event);
+    bool eventFilter(QObject *obj, QEvent *event) override;
+    QWidget* widgetToFocusOnRaise() override;
 
 public slots:
     void focusInputLineEdit();
@@ -101,19 +102,18 @@ private:
     QCompleter *completer;
     QShortcut *historyUpShortcut;
     QShortcut *historyDownShortcut;
-    FILE *origStderr;
-    FILE *origStdout;
-    FILE *origStdin;
-    QLocalSocket *pipeSocket;
+    FILE *origStderr = nullptr;
+    FILE *origStdout = nullptr;
+    FILE *origStdin = nullptr;
+    QLocalSocket *pipeSocket  = nullptr;
 #ifdef Q_OS_WIN
     HANDLE hRead;
     HANDLE hWrite;
 #else
     int redirectPipeFds[2];
-    int stdinFile;
+    int stdinFile = -1;
     QString stdinFifoPath;
     QVector<char> *redirectionBuffer;
-    QSocketNotifier *outputNotifier;
 #endif
 };
 

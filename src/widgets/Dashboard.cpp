@@ -21,13 +21,13 @@
 #include <QDialog>
 #include <QTreeWidget>
 
-Dashboard::Dashboard(MainWindow *main, QAction *action) :
-    CutterDockWidget(main, action),
+Dashboard::Dashboard(MainWindow *main) :
+    CutterDockWidget(main),
     ui(new Ui::Dashboard)
 {
     ui->setupUi(this);
 
-    connect(Core(), SIGNAL(refreshAll()), this, SLOT(updateContents()));
+    connect(Core(), &CutterCore::refreshAll, this, &Dashboard::updateContents);
 }
 
 Dashboard::~Dashboard() {}

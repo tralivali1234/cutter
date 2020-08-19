@@ -122,26 +122,27 @@ QString ColorThemeWorker::save(const QJsonDocument &theme, const QString &themeN
     }
 
     QJsonObject obj = theme.object();
-    QString line;
-    QColor::NameFormat format;
     for (auto it = obj.constBegin(); it != obj.constEnd(); it++) {
-        if (cutterSpecificOptions.contains(it.key())) {
-            line = "#~%1 %2\n";
-            format = QColor::HexArgb;
-        } else {
-            line = "ec %1 %2\n";
-            format = QColor::HexRgb;
-        }
+
         QJsonArray arr = it.value().toArray();
+        QColor color;
         if (arr.isEmpty()) {
-            fOut.write(line.arg(it.key())
-                       .arg(it.value().toVariant().value<QColor>().name(format)).toUtf8());
+            color = it.value().toVariant().value<QColor>();
         } else if (arr.size() == 4) {
-            fOut.write(line.arg(it.key())
-                       .arg(QColor(arr[0].toInt(), arr[1].toInt(), arr[2].toInt(), arr[3].toInt()).name(format)).toUtf8());
+            color = QColor(arr[0].toInt(), arr[1].toInt(), arr[2].toInt(), arr[3].toInt());
         } else if (arr.size() == 3) {
-            fOut.write(line.arg(it.key())
-                       .arg(QColor(arr[0].toInt(), arr[1].toInt(), arr[2].toInt()).name(format)).toUtf8());
+            color = QColor(arr[0].toInt(), arr[1].toInt(), arr[2].toInt());
+        } else {
+            continue;
+        }
+        if (cutterSpecificOptions.contains(it.key())) {
+            fOut.write(QString("#~%1 rgb:%2\n")
+                       .arg(it.key(), color.name(QColor::HexArgb).remove('#'))
+                       .toUtf8());
+        } else {
+            fOut.write(QString("ec %1 rgb:%2\n")
+                       .arg(it.key(), color.name(QColor::HexRgb).remove('#'))
+                       .toUtf8());
         }
     }
 
@@ -196,8 +197,8 @@ QJsonDocument ColorThemeWorker::getTheme(const QString& themeName) const
             return QJsonDocument();
         }
         QStringList sl;
-        for (auto &line : QString(src.readAll()).split('\n', QString::SkipEmptyParts)) {
-            sl = line.replace("#~", "ec ").replace("rgb:", "#").split(' ', QString::SkipEmptyParts);
+        for (auto &line : QString(src.readAll()).split('\n', CUTTER_QT_SKIP_EMPTY_PARTS)) {
+            sl = line.replace("#~", "ec ").replace("rgb:", "#").split(' ', CUTTER_QT_SKIP_EMPTY_PARTS);
             if (sl.size() != 3 || sl[0][0] == '#') {
                 continue;
             }
@@ -320,7 +321,7 @@ bool ColorThemeWorker::isFileTheme(const QString& filePath, bool* ok) const
     // The below construct mimics the behaviour of QRegexP::exactMatch(), which was here before
     QRegularExpression regexp("\\A(?:" + pattern + ")\\z");
 
-    for (auto &line : QString(f.readAll()).split('\n', QString::SkipEmptyParts)) {
+    for (auto &line : QString(f.readAll()).split('\n', CUTTER_QT_SKIP_EMPTY_PARTS)) {
         line.replace("#~", "ec ");
         if (!line.isEmpty() && !regexp.match(line).hasMatch()) {
             *ok = true;

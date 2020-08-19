@@ -4,6 +4,7 @@
 #include "plugins/PluginManager.h"
 #include "CutterConfig.h"
 #include "common/Decompiler.h"
+#include "common/ResourcePaths.h"
 
 #include <QApplication>
 #include <QFileOpenEvent>
@@ -143,9 +144,6 @@ CutterApplication::CutterApplication(int &argc, char **argv) : QApplication(argc
         mainWindow->openNewFile(clOptions.fileOpenOptions, askOptions);
     }
 
-#ifdef CUTTER_APPVEYOR_R2DEC
-    qputenv("R2DEC_HOME", "radare2\\lib\\plugins\\r2dec-js");
-#endif
 
 #ifdef APPIMAGE
     {
@@ -178,10 +176,13 @@ CutterApplication::CutterApplication(int &argc, char **argv) : QApplication(argc
     }
 #endif
 
+#ifdef CUTTER_APPVEYOR_R2DEC
+    qputenv("R2DEC_HOME", "lib\\plugins\\r2dec-js");
+#endif
 #ifdef Q_OS_WIN
     {
         auto sleighHome = QDir(QCoreApplication::applicationDirPath());
-        sleighHome.cd("radare2/lib/plugins/r2ghidra_sleigh");
+        sleighHome.cd("lib/plugins/r2ghidra_sleigh");
         Core()->setConfig("r2ghidra.sleighhome", sleighHome.absolutePath());
     }
 #endif
@@ -241,7 +242,7 @@ bool CutterApplication::loadTranslations()
         return true;
     }
     const auto &allLocales = QLocale::matchingLocales(QLocale::AnyLanguage, QLocale::AnyScript,
-        QLocale::AnyCountry);
+                                                      QLocale::AnyCountry);
 
     bool cutterTrLoaded = false;
 
@@ -255,7 +256,7 @@ bool CutterApplication::loadTranslations()
             QTranslator *trQtBase = new QTranslator;
             QTranslator *trQt = new QTranslator;
 
-            const QStringList &cutterTrPaths = Config()->getTranslationsDirectories();
+            const QStringList &cutterTrPaths = Cutter::getTranslationsDirectories();
 
             for (const auto &trPath : cutterTrPaths) {
                 if (trCutter && trCutter->load(it, QLatin1String("cutter"), QLatin1String("_"), trPath)) {
@@ -303,7 +304,7 @@ bool CutterApplication::parseCommandLineOptions()
     cmd_parser.addVersionOption();
     cmd_parser.addPositionalArgument("filename", QObject::tr("Filename to open."));
 
-    QCommandLineOption analOption({"A", "anal"},
+    QCommandLineOption analOption({"A", "analysis"},
                                   QObject::tr("Automatically open file and optionally start analysis. "
                                               "Needs filename to be specified. May be a value between 0 and 2:"
                                               " 0 = no analysis, 1 = aaa, 2 = aaaa (experimental)"),
@@ -324,6 +325,11 @@ bool CutterApplication::parseCommandLineOptions()
                                     QObject::tr("Run script file"),
                                     QObject::tr("file"));
     cmd_parser.addOption(scriptOption);
+
+    QCommandLineOption writeModeOption({"w", "writemode"},
+                                       QObject::tr("Open file in write mode"));
+    cmd_parser.addOption(writeModeOption);
+
 
     QCommandLineOption pythonHomeOption("pythonhome",
                                         QObject::tr("PYTHONHOME to use for embedded python interpreter"),
@@ -407,6 +413,8 @@ bool CutterApplication::parseCommandLineOptions()
             break;
         }
         opts.fileOpenOptions.script = cmd_parser.value(scriptOption);
+
+        opts.fileOpenOptions.writeEnabled = cmd_parser.isSet(writeModeOption);
     }
 
     if (cmd_parser.isSet(pythonHomeOption)) {

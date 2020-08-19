@@ -137,8 +137,8 @@ bool StringsProxyModel::lessThan(const QModelIndex &left, const QModelIndex &rig
     return leftStr->vaddr < rightStr->vaddr;
 }
 
-StringsWidget::StringsWidget(MainWindow *main, QAction *action) :
-    CutterDockWidget(main, action),
+StringsWidget::StringsWidget(MainWindow *main) :
+    CutterDockWidget(main),
     ui(new Ui::StringsWidget),
     tree(new CutterTreeWidget(this))
 {
@@ -154,10 +154,9 @@ StringsWidget::StringsWidget(MainWindow *main, QAction *action) :
     QShortcut *toggle_shortcut = new QShortcut(widgetShortcuts["StringsWidget"], main);
     connect(toggle_shortcut, &QShortcut::activated, this, [ = ] () {
         toggleDockWidget(true);
-        main->updateDockActionChecked(action);
-    } );
+    });
 
-    connect(ui->actionCopy_String, SIGNAL(triggered()), this, SLOT(on_actionCopy()));
+    connect(ui->actionCopy_String, &QAction::triggered, this, &StringsWidget::on_actionCopy);
 
     ui->actionFilter->setShortcut(QKeySequence::Find);
 
@@ -173,8 +172,8 @@ StringsWidget::StringsWidget(MainWindow *main, QAction *action) :
     auto menu = ui->stringsTreeView->getItemContextMenu();
     menu->addAction(ui->actionCopy_String);
 
-    connect(ui->quickFilterView, SIGNAL(filterTextChanged(const QString &)), proxyModel,
-            SLOT(setFilterWildcard(const QString &)));
+    connect(ui->quickFilterView, &ComboQuickFilterView::filterTextChanged,
+            proxyModel, &QSortFilterProxyModel::setFilterWildcard);
 
     connect(ui->quickFilterView, &ComboQuickFilterView::filterTextChanged, this, [this] {
         tree->showItemsNumber(proxyModel->rowCount());

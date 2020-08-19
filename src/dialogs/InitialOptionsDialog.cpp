@@ -27,9 +27,9 @@ InitialOptionsDialog::InitialOptionsDialog(MainWindow *main):
     ui->logoSvgWidget->load(Config()->getLogoFile());
 
     // Fill the plugins combo
-    asm_plugins = core->getAsmPluginNames();
-    for (const auto &plugin : asm_plugins) {
-        ui->archComboBox->addItem(plugin, plugin);
+    asmPlugins = core->getRAsmPluginDescriptions();
+    for (const auto &plugin : asmPlugins) {
+        ui->archComboBox->addItem(plugin.name, plugin.name);
     }
 
     setTooltipWithConfigHelp(ui->archComboBox,"asm.arch");
@@ -85,13 +85,13 @@ InitialOptionsDialog::InitialOptionsDialog(MainWindow *main):
 
     updatePDBLayout();
 
-    connect(ui->pdbCheckBox, SIGNAL(stateChanged(int)), this, SLOT(updatePDBLayout()));
+    connect(ui->pdbCheckBox, &QCheckBox::stateChanged, this, &InitialOptionsDialog::updatePDBLayout);
 
     updateScriptLayout();
 
-    connect(ui->scriptCheckBox, SIGNAL(stateChanged(int)), this, SLOT(updateScriptLayout()));
+    connect(ui->scriptCheckBox, &QCheckBox::stateChanged, this, &InitialOptionsDialog::updateScriptLayout);
 
-    connect(ui->cancelButton, SIGNAL(clicked()), this, SLOT(reject()));
+    connect(ui->cancelButton, &QPushButton::clicked, this, &InitialOptionsDialog::reject);
 
     ui->programLineEdit->setText(main->getFilename());
 }
@@ -103,15 +103,23 @@ void InitialOptionsDialog::updateCPUComboBox()
     QString currentText = ui->cpuComboBox->lineEdit()->text();
     ui->cpuComboBox->clear();
 
-    QString cmd = "e asm.cpu=?";
-
     QString arch = getSelectedArch();
-    if (!arch.isNull()) {
-        cmd += " @a:" + arch;
+    QStringList cpus;
+    if (!arch.isEmpty()) {
+        auto pluginDescr = std::find_if(asmPlugins.begin(), asmPlugins.end(), [&](const RAsmPluginDescription &plugin) {
+            return plugin.name == arch;
+        });
+        if (pluginDescr != asmPlugins.end()) {
+#if QT_VERSION >= QT_VERSION_CHECK(5,14,0)
+            cpus = pluginDescr->cpus.split(",", Qt::SkipEmptyParts);
+#else
+            cpus = pluginDescr->cpus.split(",", QString::SkipEmptyParts);
+#endif
+        }
     }
 
     ui->cpuComboBox->addItem("");
-    ui->cpuComboBox->addItems(core->cmdList(cmd));
+    ui->cpuComboBox->addItems(cpus);
 
     ui->cpuComboBox->lineEdit()->setText(currentText);
 }
@@ -164,6 +172,9 @@ void InitialOptionsDialog::loadOptions(const InitialOptions &options)
     if (options.binLoadAddr != RVA_INVALID) {
         ui->entry_loadOffset->setText(RAddressString(options.binLoadAddr));
     }
+
+	ui->writeCheckBox->setChecked(options.writeEnabled);
+
 
     // TODO: all other options should also be applied to the ui
 }
@@ -278,7 +289,7 @@ void InitialOptionsDialog::setupAndStartAnalysis(/*int level, QList<QString> adv
         options.analCmd = { {"aaa", "Auto analysis"} };
         break;
     case 2:
-        options.analCmd = { {"aaaa", "Auto analysis (experimental}"} };
+        options.analCmd = { {"aaaa", "Auto analysis (experimental)"} };
         break;
     case 3:
         options.analCmd = getSelectedAdvancedAnalCmds();

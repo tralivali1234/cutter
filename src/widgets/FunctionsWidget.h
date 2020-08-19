@@ -69,7 +69,7 @@ public:
     QString name(const QModelIndex &index) const override;
 private slots:
     void seekChanged(RVA addr);
-    void functionRenamed(const QString &prev_name, const QString &new_name);
+    void functionRenamed(const RVA offset, const QString &new_name);
 };
 
 
@@ -92,7 +92,7 @@ class FunctionsWidget : public ListDockWidget
     Q_OBJECT
 
 public:
-    explicit FunctionsWidget(MainWindow *main, QAction *action = nullptr);
+    explicit FunctionsWidget(MainWindow *main);
     ~FunctionsWidget() override;
     void changeSizePolicy(QSizePolicy::Policy hor, QSizePolicy::Policy ver);
 

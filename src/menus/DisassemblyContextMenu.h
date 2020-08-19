@@ -6,7 +6,9 @@
 #include <QMenu>
 #include <QKeySequence>
 
-class DisassemblyContextMenu : public QMenu
+class MainWindow;
+
+class CUTTER_EXPORT DisassemblyContextMenu : public QMenu
 {
     Q_OBJECT
 
@@ -29,6 +31,7 @@ public slots:
 
 private slots:
     void aboutToShowSlot();
+    void aboutToHideSlot();
 
     void on_actionEditFunction_triggered();
     void on_actionEditInstruction_triggered();
@@ -46,6 +49,7 @@ private slots:
     void on_actionRenameUsedHere_triggered();
     void on_actionSetFunctionVarTypes_triggered();
     void on_actionXRefs_triggered();
+    void on_actionXRefsForVariables_triggered();
     void on_actionDisplayOptions_triggered();
 
     void on_actionDeleteComment_triggered();
@@ -131,6 +135,7 @@ private:
     QAction actionRenameUsedHere;
     QAction actionSetFunctionVarTypes;
     QAction actionXRefs;
+    QAction actionXRefsForVariables;
     QAction actionDisplayOptions;
 
     QAction actionDeleteComment;
@@ -203,6 +208,13 @@ private:
     void addBreakpointMenu();
     void addDebugMenu();
 
+    /**
+     * @brief Checks if the currently highlighted word in the disassembly widget
+     * is a local variable or function paramter.
+     * @return Return true if the highlighted word is the name of a local variable or function parameter,
+     * return false otherwise.
+     */
+    bool isHighlightedWordLocalVar();
     struct ThingUsedHere {
         QString name;
         RVA offset;
